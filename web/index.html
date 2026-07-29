@@ -278,10 +278,12 @@
 import * as duckdb from './static/vendor/duckdb-bundle.mjs';
 
 const params = new URLSearchParams(location.search);
-// Production: point this at the public R2 base (e.g. https://pub-xxxx.r2.dev/lda).
-// Local dev/testing: pass ?data=<url> to override, or serve the whole repo root and use
-// the default relative path below (resolves to <repo-root>/data/publish/parquet).
-const DATA_BASE = params.get('data') || window.DATA_BASE || '../data/publish/parquet';
+// Data source resolution: ?data= override → window.DATA_BASE → localhost dev fallback
+// (repo served from its root) → production R2 bucket.
+const DATA_BASE = params.get('data') || window.DATA_BASE ||
+  (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? '../data/publish/parquet'
+    : 'https://pub-6990a52a75864d00a6e26bbb127e7498.r2.dev/lda');
 
 const statusEl = document.getElementById('status-pill');
 let db, conn;
