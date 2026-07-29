@@ -297,8 +297,14 @@ let SHOW_FIRST_TIME = false;
 async function initDuckDB() {
   // The worker resolves these paths relative to its OWN script location, not the page's —
   // must be absolute URLs or it silently hangs trying to fetch a doubled-up relative path.
+  // The 34MB wasm binary exceeds Cloudflare Workers' 25MiB per-asset limit, so in production
+  // it's fetched from R2 (cross-origin is fine for wasm; the worker SCRIPT must stay
+  // same-origin, and does). Locally it lives at <repo-root>/vendor/.
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   const mainWorker = new URL('./static/vendor/duckdb-browser-eh.worker.js', location.href).toString();
-  const mainModule = new URL('./static/vendor/duckdb-eh.wasm', location.href).toString();
+  const mainModule = isLocal
+    ? new URL('../vendor/duckdb-eh.wasm', location.href).toString()
+    : 'https://pub-6990a52a75864d00a6e26bbb127e7498.r2.dev/lda/vendor/duckdb-eh.wasm';
   const worker = new Worker(mainWorker);
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
   db = new duckdb.AsyncDuckDB(logger, worker);
