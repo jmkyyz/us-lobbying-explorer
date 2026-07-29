@@ -1,0 +1,1040 @@
+<title>US Lobbying Explorer</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --series-1-wash:  rgba(42,120,214,0.10);
+    --series-2:       #eb6834;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-1-wash:  rgba(57,135,229,0.14);
+      --series-2:       #d95926;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-1-wash:  rgba(57,135,229,0.14);
+    --series-2:       #d95926;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 20px 24px 12px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .tagline { color: var(--text-secondary); font-size: 13px; }
+  .status-pill {
+    display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px;
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-muted);
+    font-size: 12px;
+  }
+  nav.tabs {
+    display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--gridline);
+  }
+  nav.tabs button {
+    background: none; border: none; padding: 10px 14px; font-size: 14px; cursor: pointer;
+    color: var(--text-secondary); border-bottom: 2px solid transparent; font-family: inherit;
+  }
+  nav.tabs button.active { color: var(--text-primary); border-bottom-color: var(--series-1); font-weight: 600; }
+
+  main { padding: 16px 24px 40px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .filter-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 14px;
+    padding: 12px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field label { font-size: 11px; color: var(--text-muted); }
+  .field input, .field select {
+    font-family: inherit; font-size: 13px; padding: 5px 8px; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--page); color: var(--text-primary);
+  }
+  .field input { width: 170px; }
+  button.primary {
+    font-family: inherit; font-size: 13px; padding: 6px 14px; border-radius: 5px; border: none;
+    background: var(--series-1); color: #fff; cursor: pointer; font-weight: 600;
+  }
+  button.secondary {
+    font-family: inherit; font-size: 13px; padding: 6px 12px; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); cursor: pointer;
+  }
+
+  .stats-row { display: flex; gap: 24px; margin-bottom: 12px; color: var(--text-secondary); font-size: 13px; }
+  .stats-row b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--gridline); font-size: 12.5px; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  tr:last-child td { border-bottom: none; }
+  .client-link { color: var(--series-1); cursor: pointer; text-decoration: none; }
+  .client-link:hover { text-decoration: underline; }
+  .badge {
+    display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+    background: var(--series-1-wash); color: var(--series-1); font-weight: 600; margin-left: 6px;
+  }
+  .pager { display: flex; gap: 8px; align-items: center; margin-top: 10px; color: var(--text-secondary); font-size: 12.5px; }
+
+  .topic-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .topic-pill {
+    padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-1);
+    color: var(--text-secondary); font-size: 12.5px; cursor: pointer;
+  }
+  .topic-pill.active { background: var(--series-1); border-color: var(--series-1); color: #fff; font-weight: 600; }
+
+  .chart-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .chart-title { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 600; }
+  .chart-caption { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; max-width: 720px; }
+  .metric-picker { display: flex; gap: 6px; margin-bottom: 12px; }
+  .range-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+  .clients-count { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .clients-scroll.expanded { max-height: 540px; overflow-y: auto; border-bottom: 1px solid var(--gridline); }
+  .range-row select {
+    font-family: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--page); color: var(--text-primary);
+  }
+  .legend { display: flex; gap: 16px; margin-bottom: 6px; font-size: 12px; color: var(--text-secondary); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 14px; height: 0; border-top: 2px solid; display: inline-block; }
+  .legend-swatch.dashed { border-top-style: dashed; }
+  #chart-tooltip {
+    position: fixed; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font-size: 12px; color: var(--text-primary); display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-variant-numeric: tabular-nums; z-index: 10;
+  }
+  .grid-line { stroke: var(--gridline); stroke-width: 1; }
+  .axis-text { fill: var(--text-muted); font-size: 10px; font-family: inherit; }
+  .bar { fill: var(--series-1); }
+  .bar-hit { fill: transparent; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 340px; gap: 14px; }
+  @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    align-items: flex-start; justify-content: center; padding: 40px 20px; overflow-y: auto; z-index: 20;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-panel {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    max-width: 640px; width: 100%; padding: 18px; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+  }
+  .modal-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; gap: 12px; }
+  .modal-title { font-size: 16px; font-weight: 700; }
+  .modal-subtitle { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+  .modal-footer { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--gridline); }
+  .activity-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+  .activity-card .issue-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .activity-card .meta { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .activity-card .desc { font-size: 12.5px; color: var(--text-primary); line-height: 1.5; }
+  .activity-card .issue-code {
+    display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
+    background: var(--series-1-wash); color: var(--series-1); cursor: default;
+  }
+</style>
+
+<header>
+  <h1>US Lobbying Explorer</h1>
+  <div class="tagline">Search federal lobbying disclosures &middot; track topics like tariffs or Canada &middot; see who's behind them</div>
+  <div class="status-pill" id="status-pill">Loading engine&hellip;</div>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-view="topics">Topic Explorer</button>
+  <button class="tab-btn" data-view="browse">Search / Browse</button>
+</nav>
+
+<main>
+  <section id="view-topics" class="view active">
+    <div class="topic-picker" id="topic-picker"></div>
+    <div class="filter-bar" style="margin-bottom:14px">
+      <div class="field">
+        <label>Or search any keyword</label>
+        <input id="topic-adhoc" placeholder="e.g. lumber, drone, semiconductor" style="width:260px">
+      </div>
+      <button class="primary" id="btn-topic-adhoc">Search text</button>
+    </div>
+
+    <div class="metric-picker" id="metric-picker">
+      <button class="topic-pill metric-pill active" data-metric="revenue">Revenue</button>
+      <button class="topic-pill metric-pill" data-metric="disclosures">Disclosures</button>
+      <button class="topic-pill metric-pill" data-metric="avg_contract">Avg contract</button>
+    </div>
+
+    <div class="two-col">
+      <div class="chart-card" style="grid-column: 1 / -1">
+        <div class="chart-title" id="topic-chart-title">Revenue by quarter</div>
+        <div class="chart-caption" id="topic-chart-caption"></div>
+        <div class="legend" id="topic-chart-legend"></div>
+        <svg id="topic-chart" width="100%" height="260"></svg>
+      </div>
+    </div>
+    <div class="two-col" style="margin-top:14px">
+      <div class="chart-card">
+        <div class="chart-title">Who's behind it (top clients)</div>
+        <div class="chart-caption">Click a client to see what they lobbied about on this topic. Narrow the window to see who's been active recently.</div>
+        <div class="range-row">
+          <label>Filed from <select id="range-from"></select></label>
+          <label>to <select id="range-to"></select></label>
+        </div>
+        <div id="topic-clients-table"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-browse" class="view">
+    <div class="filter-bar">
+      <div class="field">
+        <label>Client name</label>
+        <input id="f-client" placeholder="e.g. Lifeway Foods">
+      </div>
+      <div class="field">
+        <label>Registrant / firm</label>
+        <input id="f-registrant" placeholder="e.g. Akin Gump">
+      </div>
+      <div class="field">
+        <label>Filing year</label>
+        <input id="f-year" placeholder="e.g. 2026" style="width:90px">
+      </div>
+      <div class="field">
+        <label>Issue code</label>
+        <input id="f-issue" placeholder="e.g. TAR" style="width:90px">
+      </div>
+      <div class="field">
+        <label>Government entity</label>
+        <input id="f-entity" placeholder="e.g. Department of Defense">
+      </div>
+      <div class="field">
+        <label><input type="checkbox" id="f-firsttime"> first-time orgs only</label>
+      </div>
+      <button class="primary" id="btn-search">Search</button>
+      <button class="secondary" id="btn-clear">Clear</button>
+    </div>
+
+    <div class="stats-row" id="browse-stats"></div>
+    <div id="browse-table-wrap"></div>
+    <div class="pager" id="browse-pager"></div>
+  </section>
+</main>
+
+<div id="chart-tooltip"></div>
+
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal-panel">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-client-name"></div>
+        <div class="modal-subtitle" id="modal-topic-name"></div>
+      </div>
+      <button class="secondary" id="modal-close">Close</button>
+    </div>
+    <div id="modal-body"></div>
+    <div class="modal-footer">
+      <button class="secondary" id="modal-view-all">View all filings for this client &rarr;</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as duckdb from './static/vendor/duckdb-bundle.mjs';
+
+const params = new URLSearchParams(location.search);
+// Production: point this at the public R2 base (e.g. https://pub-xxxx.r2.dev/lda).
+// Local dev/testing: pass ?data=<url> to override, or serve the whole repo root and use
+// the default relative path below (resolves to <repo-root>/data/publish/parquet).
+const DATA_BASE = params.get('data') || window.DATA_BASE || '../data/publish/parquet';
+
+const statusEl = document.getElementById('status-pill');
+let db, conn;
+let manifestVersion = '';
+let MANIFEST = {};
+// "First-time org" detection is only trustworthy when the loaded years are contiguous —
+// against gapped history, an org that debuted inside the gap looks like a new player when it
+// reappears. Default hidden; publish.py sets first_time_reliable=true once the run is gapless.
+let SHOW_FIRST_TIME = false;
+
+async function initDuckDB() {
+  // The worker resolves these paths relative to its OWN script location, not the page's —
+  // must be absolute URLs or it silently hangs trying to fetch a doubled-up relative path.
+  const mainWorker = new URL('./static/vendor/duckdb-browser-eh.worker.js', location.href).toString();
+  const mainModule = new URL('./static/vendor/duckdb-eh.wasm', location.href).toString();
+  const worker = new Worker(mainWorker);
+  const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+  db = new duckdb.AsyncDuckDB(logger, worker);
+  await db.instantiate(mainModule);
+  conn = await db.connect();
+}
+
+async function loadData() {
+  statusEl.textContent = 'Loading engine…';
+  await initDuckDB();
+
+  statusEl.textContent = 'Fetching manifest…';
+  const manifest = await fetch(`${DATA_BASE}/manifest.json`, { cache: 'no-cache' }).then(r => r.json());
+  MANIFEST = manifest;
+  manifestVersion = manifest.version;
+  SHOW_FIRST_TIME = manifest.first_time_reliable === true;
+  if (!SHOW_FIRST_TIME) {
+    // Hide the "first-time orgs only" filter until the backfill is contiguous.
+    const cb = document.getElementById('f-firsttime');
+    if (cb) cb.closest('.field').style.display = 'none';
+  }
+
+  for (const [key, file] of Object.entries(manifest.files)) {
+    statusEl.textContent = `Loading ${file}…`;
+    const buf = await fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`).then(r => r.arrayBuffer());
+    await db.registerFileBuffer(file, new Uint8Array(buf));
+    await conn.query(`CREATE OR REPLACE VIEW ${key} AS SELECT * FROM '${file}'`);
+  }
+
+  const n = await conn.query(`SELECT count(*) AS n FROM filings`);
+  statusEl.textContent = `Ready · ${Number(n.toArray()[0].n).toLocaleString()} filings loaded (built ${manifest.built_at})`;
+}
+
+function plainValue(v) {
+  // DuckDB-WASM returns LIST columns as Arrow Vector objects (toArray() but no .join/.map
+  // like a real array), and count()/sum() as BigInt (not a plain number) — either one throws
+  // as soon as it touches normal arithmetic ("Cannot mix BigInt and other types") or Math.max().
+  // Flatten/convert both so the rest of the UI can treat every row as plain JSON.
+  if (v !== null && typeof v === 'object' && typeof v.toArray === 'function') {
+    return Array.from(v.toArray());
+  }
+  if (typeof v === 'bigint') {
+    return Number(v);
+  }
+  return v;
+}
+
+function q(sql) {
+  return conn.query(sql).then(res => res.toArray().map(r => {
+    const obj = r.toJSON();
+    for (const k in obj) obj[k] = plainValue(obj[k]);
+    return obj;
+  }));
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/'/g, "''");
+}
+
+// ---------- Search / Browse ----------
+
+let browsePage = 0;
+const PAGE_SIZE = 50;
+
+function buildBrowseWhere() {
+  const clauses = [];
+  const client = document.getElementById('f-client').value.trim();
+  const registrant = document.getElementById('f-registrant').value.trim();
+  const year = document.getElementById('f-year').value.trim();
+  const issue = document.getElementById('f-issue').value.trim();
+  const entity = document.getElementById('f-entity').value.trim();
+  const firstTime = document.getElementById('f-firsttime').checked;
+
+  if (client) clauses.push(`lower(client_name) LIKE '%${esc(client.toLowerCase())}%'`);
+  if (registrant) clauses.push(`lower(registrant_name) LIKE '%${esc(registrant.toLowerCase())}%'`);
+  if (year) clauses.push(`filing_year = ${parseInt(year, 10) || 0}`);
+  if (issue) clauses.push(`list_contains(issue_codes, '${esc(issue.toUpperCase())}')`);
+  if (entity) clauses.push(`len(list_filter(government_entities, x -> lower(x) LIKE '%${esc(entity.toLowerCase())}%')) > 0`);
+  if (firstTime) clauses.push(`is_first_time_org`);
+
+  return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+}
+
+async function runBrowseSearch(resetPage = true) {
+  if (resetPage) browsePage = 0;
+  const where = buildBrowseWhere();
+
+  const [statsRow] = await q(
+    `SELECT count(*) AS total, count(DISTINCT client_id) AS distinct_clients FROM filings ${where}`
+  );
+  // DuckDB returns count(*) as BigInt — convert now so later arithmetic (pager math) doesn't
+  // throw "Cannot mix BigInt and other types".
+  const total = Number(statsRow.total);
+  const distinct_clients = Number(statsRow.distinct_clients);
+  document.getElementById('browse-stats').innerHTML =
+    `<span><b>${Number(total).toLocaleString()}</b> filings</span>` +
+    `<span><b>${Number(distinct_clients).toLocaleString()}</b> distinct clients</span>`;
+
+  const rows = await q(
+    `SELECT filing_uuid, client_name, client_id, registrant_name, filing_type_display,
+            filing_year, filing_period_display, dt_posted, income, expenses,
+            issue_codes, is_first_time_org
+     FROM filings ${where}
+     ORDER BY dt_posted DESC
+     LIMIT ${PAGE_SIZE} OFFSET ${browsePage * PAGE_SIZE}`
+  );
+
+  renderBrowseTable(rows);
+  document.getElementById('browse-pager').innerHTML =
+    `<button class="secondary" id="pg-prev" ${browsePage === 0 ? 'disabled' : ''}>&larr; Prev</button>` +
+    `<span>page ${browsePage + 1} of ${Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>` +
+    `<button class="secondary" id="pg-next" ${(browsePage + 1) * PAGE_SIZE >= total ? 'disabled' : ''}>Next &rarr;</button>`;
+  document.getElementById('pg-prev')?.addEventListener('click', () => { browsePage--; runBrowseSearch(false); });
+  document.getElementById('pg-next')?.addEventListener('click', () => { browsePage++; runBrowseSearch(false); });
+}
+
+function fmtMoney(v) {
+  if (v === null || v === undefined) return '—';
+  return '$' + Number(v).toLocaleString();
+}
+
+function renderBrowseTable(rows) {
+  if (!rows.length) {
+    document.getElementById('browse-table-wrap').innerHTML =
+      '<div style="padding:20px;color:var(--text-muted)">No filings match these filters.</div>';
+    return;
+  }
+  const body = rows.map(r => `
+    <tr>
+      <td><a class="client-link" data-client="${encodeURIComponent(r.client_name || '')}" data-client-id="${r.client_id}">${escapeHtml(r.client_name || '—')}</a>
+        ${SHOW_FIRST_TIME && r.is_first_time_org ? '<span class="badge">first-time</span>' : ''}</td>
+      <td>${escapeHtml(r.registrant_name || '—')}</td>
+      <td>${escapeHtml(r.filing_type_display || '')}</td>
+      <td>${r.filing_year} ${escapeHtml(r.filing_period_display || '')}</td>
+      <td class="num">${fmtMoney(r.income)}</td>
+      <td class="num">${fmtMoney(r.expenses)}</td>
+      <td>${(r.issue_codes || []).join(', ')}</td>
+    </tr>`).join('');
+  document.getElementById('browse-table-wrap').innerHTML = `
+    <table>
+      <thead><tr><th>Client</th><th>Registrant</th><th>Type</th><th>Period</th><th>Income</th><th>Expenses</th><th>Issues</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+  document.querySelectorAll('.client-link').forEach(el => {
+    el.addEventListener('click', () => {
+      document.getElementById('f-client').value = decodeURIComponent(el.dataset.client);
+      document.getElementById('f-registrant').value = '';
+      document.getElementById('f-year').value = '';
+      document.getElementById('f-issue').value = '';
+      document.getElementById('f-entity').value = '';
+      document.getElementById('f-firsttime').checked = false;
+      switchView('browse');
+      runBrowseSearch();
+    });
+  });
+}
+
+document.getElementById('btn-search').addEventListener('click', () => runBrowseSearch());
+document.getElementById('btn-clear').addEventListener('click', () => {
+  ['f-client', 'f-registrant', 'f-year', 'f-issue', 'f-entity'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f-firsttime').checked = false;
+  runBrowseSearch();
+});
+// Enter submits from any filter input.
+['f-client', 'f-registrant', 'f-year', 'f-issue', 'f-entity'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') runBrowseSearch();
+  });
+});
+
+// ---------- Topic Explorer ----------
+
+let TOPICS = {};
+let activeTopic = null;
+let activeAdhoc = null;
+let activeMetric = 'revenue';
+let topicSeriesRows = []; // cached quarterly aggregate rows for the current topic — metric
+                           // toggle just re-renders from this, no re-query needed.
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadTopicsConfig() {
+  // Lives inside web/ so the same relative path works when web/ is deployed as the site root.
+  TOPICS = await fetch('./topics.json').then(r => r.json()).catch(() => ({}));
+  const picker = document.getElementById('topic-picker');
+  picker.innerHTML = Object.entries(TOPICS).map(([key, cfg]) =>
+    `<button class="topic-pill" data-topic="${key}">${cfg.label}</button>`
+  ).join('');
+  picker.querySelectorAll('.topic-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeTopic = btn.dataset.topic;
+      activeAdhoc = null;
+      picker.querySelectorAll('.topic-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('topic-adhoc').value = '';
+      runTopicQuery();
+    });
+  });
+  if (Object.keys(TOPICS).length) {
+    activeTopic = Object.keys(TOPICS)[0];
+    picker.querySelector('.topic-pill').classList.add('active');
+  }
+}
+
+function runAdhocTopic() {
+  const kw = document.getElementById('topic-adhoc').value.trim();
+  if (!kw) return;
+  activeAdhoc = kw;
+  activeTopic = null;
+  document.querySelectorAll('.topic-pill').forEach(b => b.classList.remove('active'));
+  runTopicQuery();
+}
+document.getElementById('btn-topic-adhoc').addEventListener('click', runAdhocTopic);
+document.getElementById('topic-adhoc').addEventListener('keydown', ev => {
+  if (ev.key === 'Enter') runAdhocTopic();
+});
+
+document.querySelectorAll('.metric-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activeMetric = btn.dataset.metric;
+    document.querySelectorAll('.metric-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderMetric();
+  });
+});
+
+// Matches at the FILING level (not activity level) so a filing's total reported income isn't
+// double-counted if more than one of its activities happens to mention the same topic.
+function topicMatchInfo() {
+  if (activeAdhoc) {
+    return {
+      activitiesWhere: `lower(description) LIKE '%${esc(activeAdhoc.toLowerCase())}%'`,
+      label: `"${activeAdhoc}"`,
+    };
+  }
+  const cfg = TOPICS[activeTopic];
+  return {
+    activitiesWhere: `list_contains(topics, '${esc(activeTopic)}')`,
+    label: cfg ? cfg.label : activeTopic,
+  };
+}
+
+// Maps LDA's filing_period values to a quarter-ish x-axis position. Pre-2008 filings used a
+// semiannual (mid_year/year_end) system rather than quarterly — those slot into the H1/H2
+// position and the other two quarters are left unfilled for those years rather than guessed at.
+const PERIOD_INFO = {
+  first_quarter:  { order: 1, label: 'Q1' },
+  second_quarter: { order: 2, label: 'Q2' },
+  third_quarter:  { order: 3, label: 'Q3' },
+  fourth_quarter: { order: 4, label: 'Q4' },
+  mid_year:       { order: 2, label: 'H1' },
+  year_end:       { order: 4, label: 'H2' },
+};
+
+async function runTopicQuery() {
+  if (!activeTopic && !activeAdhoc) return;
+  const { activitiesWhere, label } = topicMatchInfo();
+
+  const raw = await q(`
+    WITH matched AS (
+      SELECT DISTINCT filing_uuid FROM activities WHERE ${activitiesWhere}
+    ),
+    base AS (
+      SELECT f.filing_year, f.filing_period, f.income, len(f.issue_codes) = 1 AS is_exclusive
+      FROM filings f
+      JOIN matched m ON m.filing_uuid = f.filing_uuid
+      -- Amendments are filed ALONGSIDE the original report, so a quarter with both would
+      -- double-count. Keep only the latest-posted filing per engagement-quarter.
+      QUALIFY row_number() OVER (
+        PARTITION BY f.registrant_id, f.client_id, f.filing_year, f.filing_period
+        ORDER BY f.dt_posted DESC
+      ) = 1
+    )
+    SELECT
+      filing_year,
+      filing_period,
+      count(*) AS all_n,
+      count(*) FILTER (WHERE is_exclusive) AS excl_n,
+      sum(income) FILTER (WHERE income IS NOT NULL) AS all_rev,
+      sum(income) FILTER (WHERE income IS NOT NULL AND is_exclusive) AS excl_rev,
+      count(*) FILTER (WHERE income IS NOT NULL) AS all_income_n,
+      count(*) FILTER (WHERE income IS NOT NULL AND is_exclusive) AS excl_income_n
+    FROM base
+    GROUP BY filing_year, filing_period
+  `);
+
+  topicSeriesRows = buildQuarterlySeries(raw);
+  document.getElementById('topic-chart-title').dataset.label = label;
+  renderMetric();
+
+  await runTopicClients();
+}
+
+// ---------- Date-range control (scopes the client list + modal, not the chart) ----------
+
+// Calendar quarters offered in the Filed from/to selects, oldest first: covered years only,
+// capped at the quarter containing the newest posted filing (labeled "to date" if partial).
+let RANGE_QUARTERS = [];
+
+function buildRangeOptions() {
+  const covered = (MANIFEST.years_covered || []).slice().sort((a, b) => a - b);
+  const maxDt = MANIFEST.date_range && MANIFEST.date_range.max_dt_posted;
+  if (!covered.length || !maxDt) return;
+  const d = new Date(maxDt.replace(' ', 'T'));
+  const curY = d.getFullYear(), curQ = Math.floor(d.getMonth() / 3) + 1;
+
+  RANGE_QUARTERS = [];
+  for (const y of covered) {
+    for (let o = 1; o <= 4; o++) {
+      if (y > curY || (y === curY && o > curQ)) break;
+      const partial = (y === curY && o === curQ);
+      RANGE_QUARTERS.push({ y, o, label: `${y} Q${o}${partial ? ' (to date)' : ''}` });
+    }
+  }
+
+  const fromSel = document.getElementById('range-from');
+  const toSel = document.getElementById('range-to');
+  const opts = RANGE_QUARTERS.map((r, i) => `<option value="${i}">${r.label}</option>`).join('');
+  fromSel.innerHTML = opts;
+  toSel.innerHTML = opts;
+  fromSel.value = 0;
+  toSel.value = RANGE_QUARTERS.length - 1;
+
+  const onChange = () => {
+    if (Number(fromSel.value) > Number(toSel.value)) {
+      // keep the pair ordered rather than erroring
+      const tmp = fromSel.value; fromSel.value = toSel.value; toSel.value = tmp;
+    }
+    runTopicClients();
+  };
+  fromSel.addEventListener('change', onChange);
+  toSel.addEventListener('change', onChange);
+}
+
+function quarterStart(qr) {
+  return `${qr.y}-${String((qr.o - 1) * 3 + 1).padStart(2, '0')}-01`;
+}
+
+function rangeClause() {
+  if (!RANGE_QUARTERS.length) return '';
+  const from = RANGE_QUARTERS[Number(document.getElementById('range-from').value)];
+  const to = RANGE_QUARTERS[Number(document.getElementById('range-to').value)];
+  if (!from || !to) return '';
+  // Full default range → no clause (avoids needlessly filtering).
+  if (from === RANGE_QUARTERS[0] && to === RANGE_QUARTERS[RANGE_QUARTERS.length - 1]) return '';
+  const next = to.o === 4 ? { y: to.y + 1, o: 1 } : { y: to.y, o: to.o + 1 };
+  return ` AND dt_posted >= '${quarterStart(from)}' AND dt_posted < '${quarterStart(next)}'`;
+}
+
+let topicClientsAll = [];      // full ranked client list for the current topic + range
+let topicClientsExpanded = false;
+const CLIENTS_PREVIEW = 20;
+
+async function runTopicClients() {
+  if (!activeTopic && !activeAdhoc) return;
+  const { activitiesWhere } = topicMatchInfo();
+  // No LIMIT — the full list stays in memory (client-side query, instant) and the renderer
+  // decides how much to show.
+  topicClientsAll = await q(
+    `SELECT client_name, client_id, count(*) AS n FROM activities
+     WHERE ${activitiesWhere} AND client_name IS NOT NULL${rangeClause()}
+     GROUP BY client_name, client_id ORDER BY n DESC`
+  );
+  topicClientsExpanded = false;
+  renderTopicClientsTable();
+}
+
+// Converts sparse (year, filing_period) group-by rows into a dense, chronologically-sorted
+// quarterly series. Within backfilled years, missing quarters are real zeros; quarters in
+// years NOT yet backfilled (per manifest.years_covered) are marked uncovered — the chart
+// breaks the line there instead of plotting a fabricated zero. Trailing quarters after the
+// newest posted filing (the not-yet-filed remainder of the current year) are dropped.
+function buildQuarterlySeries(raw) {
+  const points = raw
+    .map(r => {
+      const info = PERIOD_INFO[r.filing_period];
+      if (!info) return null; // unrecognized/legacy period code — skip rather than mis-plot it
+      return { year: Number(r.filing_year), order: info.order, label: info.label, ...r };
+    })
+    .filter(Boolean);
+  if (!points.length) return [];
+
+  const byKey = new Map(points.map(p => [`${p.year}-${p.order}`, p]));
+  const covered = new Set(MANIFEST.years_covered || []);
+  // Old manifests lack years_covered — treat every plotted year as covered in that case.
+  const hasCoverage = covered.size > 0;
+  const minYear = Math.min(...points.map(p => p.year));
+  const maxYear = Math.max(...points.map(p => p.year));
+
+  // Cut the series at the last COMPLETED calendar quarter. Quarterly reports for period Q are
+  // FILED in the following quarter (Q2 reports post in July), so the in-progress quarter only
+  // ever holds stray registrations — plotting it made every line dive toward zero at the end.
+  let endYear = maxYear, endOrder = 4;
+  const maxDt = MANIFEST.date_range && MANIFEST.date_range.max_dt_posted;
+  if (maxDt) {
+    const d = new Date(maxDt.replace(' ', 'T'));
+    let cy = d.getFullYear(), co = Math.floor(d.getMonth() / 3) + 1;
+    co -= 1; if (co === 0) { cy -= 1; co = 4; }  // previous quarter = last complete one
+    if (cy < maxYear) { endYear = cy; endOrder = co; }
+    else if (cy === maxYear) { endOrder = co; }
+    // cy > maxYear: data ends before the current quarter — no trim needed.
+  }
+
+  const ORDERS = [
+    { order: 1, label: 'Q1' }, { order: 2, label: 'Q2' },
+    { order: 3, label: 'Q3' }, { order: 4, label: 'Q4' },
+  ];
+
+  const dense = [];
+  for (let year = minYear; year <= endYear; year++) {
+    for (const o of ORDERS) {
+      if (year === endYear && o.order > endOrder) break;
+      const uncovered = hasCoverage && !covered.has(year);
+      const existing = byKey.get(`${year}-${o.order}`);
+      dense.push(existing
+        ? { ...existing, uncovered }
+        : { year, order: o.order, label: o.label, uncovered,
+            all_n: 0, excl_n: 0, all_rev: 0, excl_rev: 0, all_income_n: 0, excl_income_n: 0 });
+    }
+  }
+  return dense;
+}
+
+const METRIC_DEFS = {
+  revenue: {
+    title: 'Revenue by quarter',
+    caption: 'Outside-firm fee income reported on filings (LD-2 "income" field) for the selected quarter. "All filings" sums every filing with at least one matching activity; "Exclusively about this topic" restricts to filings whose only reported issue is this one. Amendments replace their original filing (latest per client-registrant-quarter). Gaps in the line are years not yet loaded.',
+    getAll: r => r.all_n ? r.all_rev : null,
+    getExcl: r => r.excl_n ? r.excl_rev : null,
+    fmt: v => v == null ? '—' : '$' + Math.round(v).toLocaleString(),
+  },
+  disclosures: {
+    title: 'Disclosures by quarter',
+    caption: 'Count of filings per quarter with at least one activity matching this topic.',
+    getAll: r => r.all_n,
+    getExcl: r => r.excl_n,
+    fmt: v => v == null ? '—' : Math.round(v).toLocaleString(),
+  },
+  avg_contract: {
+    title: 'Average reported income per filing, by quarter',
+    caption: 'Average income among filings in that quarter that disclosed a non-null income figure — not every filing reports one.',
+    getAll: r => r.all_income_n ? r.all_rev / r.all_income_n : null,
+    getExcl: r => r.excl_income_n ? r.excl_rev / r.excl_income_n : null,
+    fmt: v => v == null ? '—' : '$' + Math.round(v).toLocaleString(),
+  },
+};
+
+function renderMetric() {
+  const label = document.getElementById('topic-chart-title').dataset.label || '';
+  const def = METRIC_DEFS[activeMetric];
+  document.getElementById('topic-chart-title').textContent = `${def.title} — ${label}`;
+  document.getElementById('topic-chart-caption').textContent = def.caption;
+  document.getElementById('topic-chart-legend').innerHTML = `
+    <span class="legend-item"><span class="legend-swatch" style="border-color:var(--series-1)"></span>All filings mentioning this topic</span>
+    <span class="legend-item"><span class="legend-swatch dashed" style="border-color:var(--series-2)"></span>Exclusively about this topic</span>
+  `;
+  renderLineChart(topicSeriesRows, def);
+}
+
+function renderTopicClientsTable() {
+  const wrap = document.getElementById('topic-clients-table');
+  if (!topicClientsAll.length) {
+    wrap.innerHTML = '<div style="color:var(--text-muted);font-size:12.5px">No matches in this window.</div>';
+    return;
+  }
+  const total = topicClientsAll.length;
+  const rows = topicClientsExpanded ? topicClientsAll : topicClientsAll.slice(0, CLIENTS_PREVIEW);
+
+  const body = rows.map(r => `
+    <tr>
+      <td><a class="client-link" data-client="${encodeURIComponent(r.client_name)}" data-client-id="${r.client_id}">${escapeHtml(r.client_name)}</a></td>
+      <td class="num">${r.n}</td>
+    </tr>`).join('');
+
+  const toggle = total > CLIENTS_PREVIEW
+    ? `<div style="margin-top:8px"><button class="secondary" id="clients-toggle">${
+        topicClientsExpanded ? 'Show top 20 only' : `Show all ${total.toLocaleString()} clients`}</button></div>`
+    : '';
+
+  wrap.innerHTML = `
+    <div class="clients-count">${total.toLocaleString()} client${total === 1 ? '' : 's'} in this window${
+      topicClientsExpanded || total <= CLIENTS_PREVIEW ? '' : ` · showing top ${CLIENTS_PREVIEW}`}</div>
+    <div class="clients-scroll${topicClientsExpanded ? ' expanded' : ''}">
+      <table><thead><tr><th>Client</th><th>Activities</th></tr></thead><tbody>${body}</tbody></table>
+    </div>${toggle}`;
+
+  wrap.querySelectorAll('.client-link').forEach(el => {
+    el.addEventListener('click', () => {
+      openClientTopicModal(decodeURIComponent(el.dataset.client), el.dataset.clientId);
+    });
+  });
+  document.getElementById('clients-toggle')?.addEventListener('click', () => {
+    topicClientsExpanded = !topicClientsExpanded;
+    renderTopicClientsTable();
+  });
+}
+
+// ---------- Client × topic detail modal ----------
+
+// Compact quarter label from the verbose API display string:
+// "1st Quarter (Jan 1 - Mar 31)" -> "Q1"; "Mid-Year (...)" -> "H1"; "Year-End (...)" -> "H2".
+function shortPeriod(display) {
+  if (!display) return null;
+  const m = display.match(/(\d)(?:st|nd|rd|th) Quarter/);
+  if (m) return `Q${m[1]}`;
+  if (/Mid-Year/i.test(display)) return 'H1';
+  if (/Year-End/i.test(display)) return 'H2';
+  return null;
+}
+
+// LDA filers routinely paste the SAME description text under every issue code they tick on a
+// filing, so one filing can produce several activity rows that only differ by issue code.
+// Group those back together (one card per distinct description, all its issue codes as chips
+// and every quarter it appeared in) instead of repeating the same paragraph once per code.
+function groupActivities(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = `${r.description || ''} ${r.filing_year} ${r.registrant_name || ''}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        description: r.description,
+        filing_year: r.filing_year,
+        registrant_name: r.registrant_name,
+        codes: [],
+        periods: [],
+        _seen: new Set(),
+        _seenPeriods: new Set(),
+      });
+    }
+    const g = groups.get(key);
+    if (!g._seen.has(r.general_issue_code)) {
+      g._seen.add(r.general_issue_code);
+      g.codes.push({ code: r.general_issue_code, display: r.general_issue_code_display });
+    }
+    const p = shortPeriod(r.filing_period_display);
+    if (p && !g._seenPeriods.has(p)) {
+      g._seenPeriods.add(p);
+      g.periods.push(p);
+    }
+  }
+  for (const g of groups.values()) g.periods.sort();
+  return Array.from(groups.values()).sort((a, b) => b.filing_year - a.filing_year);
+}
+
+async function openClientTopicModal(clientName, clientId) {
+  const { activitiesWhere, label } = topicMatchInfo();
+  const baseQuery = cols => `
+    SELECT ${cols}
+    FROM activities
+    WHERE (${activitiesWhere}) AND client_id = ${parseInt(clientId, 10)}${rangeClause()}
+    ORDER BY dt_posted DESC`;
+  let rows;
+  try {
+    rows = await q(baseQuery(
+      'general_issue_code, general_issue_code_display, description, filing_year, filing_period_display, registrant_name'
+    ));
+  } catch (e) {
+    // Staged parquet predating the filing_period columns: fall back to year-only detail.
+    rows = await q(baseQuery(
+      'general_issue_code, general_issue_code_display, description, filing_year, NULL AS filing_period_display, registrant_name'
+    ));
+  }
+
+  document.getElementById('modal-client-name').textContent = clientName;
+  document.getElementById('modal-topic-name').textContent = `What they lobbied about matching ${label}`;
+  document.getElementById('modal-body').innerHTML = rows.length
+    ? groupActivities(rows).map(g => `
+        <div class="activity-card">
+          <div class="issue-chips">
+            ${g.codes.map(c => `<span class="issue-code" title="${escapeHtml(c.display || '')}">${c.code || ''}</span>`).join('')}
+          </div>
+          <div class="meta">
+            <span>${escapeHtml(g.registrant_name || '')}</span>
+            <span>${g.filing_year}${g.periods.length ? ' \u00b7 ' + g.periods.join(', ') : ''}</span>
+          </div>
+          <div class="desc">${escapeHtml(g.description || '(no description text on this filing)')}</div>
+        </div>`).join('')
+    : '<div style="color:var(--text-muted);font-size:12.5px">No matching activity text found.</div>';
+
+  document.getElementById('modal-view-all').onclick = () => {
+    closeModal();
+    document.getElementById('f-client').value = clientName;
+    switchView('browse');
+    runBrowseSearch();
+  };
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.getElementById('modal-overlay').addEventListener('click', ev => {
+  if (ev.target.id === 'modal-overlay') closeModal();
+});
+
+// Dual-line chart: solid "all" series + dashed "exclusive" series, hairline gridlines,
+// per-quarter hover crosshair showing both values. Two series -> legend is required (rendered
+// separately in #topic-chart-legend, not inside the SVG) with each line also dash-differentiated
+// so identity never rides on color alone.
+function renderLineChart(rows, def) {
+  const svg = document.getElementById('topic-chart');
+  const tooltip = document.getElementById('chart-tooltip');
+  // Measure at render time; the ResizeObserver below re-renders if this was mid-layout.
+  const W = Math.max(svg.getBoundingClientRect().width, 320), H = 260;
+  const padL = 64, padB = 28, padT = 12, padR = 16;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = '';
+
+  if (!rows.length) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" class="axis-text">No data</text>`;
+    return;
+  }
+
+  // Uncovered quarters (years not yet backfilled) become nulls so the line breaks there.
+  const allVals = rows.map(r => r.uncovered ? null : def.getAll(r));
+  const exclVals = rows.map(r => r.uncovered ? null : def.getExcl(r));
+  const maxV = Math.max(...allVals.filter(v => v != null), ...exclVals.filter(v => v != null), 1);
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = rows.length;
+  const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = v => padT + plotH - (v == null ? 0 : (v / maxV) * plotH);
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const gridSteps = 4;
+  for (let i = 0; i <= gridSteps; i++) {
+    const y = padT + plotH - (i / gridSteps) * plotH;
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
+    line.setAttribute('y1', y); line.setAttribute('y2', y);
+    line.setAttribute('class', 'grid-line');
+    svg.appendChild(line);
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', padL - 8); label.setAttribute('y', y + 3);
+    label.setAttribute('text-anchor', 'end'); label.setAttribute('class', 'axis-text');
+    label.textContent = def.fmt((i / gridSteps) * maxV);
+    svg.appendChild(label);
+  }
+
+  function pathFor(vals) {
+    // Pen-up on null: a null value BREAKS the line (new M subpath after the gap) rather than
+    // silently connecting across it — nulls mean "no data here", not "zero".
+    let d = '';
+    let penDown = false;
+    vals.forEach((v, i) => {
+      if (v == null) { penDown = false; return; }
+      d += (penDown ? 'L' : 'M') + xAt(i) + ' ' + yAt(v) + ' ';
+      penDown = true;
+    });
+    return d.trim();
+  }
+
+  const pathAll = document.createElementNS(ns, 'path');
+  pathAll.setAttribute('d', pathFor(allVals));
+  pathAll.setAttribute('fill', 'none');
+  pathAll.setAttribute('stroke', 'var(--series-1)');
+  pathAll.setAttribute('stroke-width', '2');
+  pathAll.setAttribute('stroke-linejoin', 'round');
+  pathAll.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(pathAll);
+
+  const pathExcl = document.createElementNS(ns, 'path');
+  pathExcl.setAttribute('d', pathFor(exclVals));
+  pathExcl.setAttribute('fill', 'none');
+  pathExcl.setAttribute('stroke', 'var(--series-2)');
+  pathExcl.setAttribute('stroke-width', '2');
+  pathExcl.setAttribute('stroke-dasharray', '5 4');
+  pathExcl.setAttribute('stroke-linejoin', 'round');
+  pathExcl.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(pathExcl);
+
+  // x-axis: label only Q1 (or H1) of each year to avoid clutter — a tick every ~4 points.
+  rows.forEach((r, i) => {
+    if (r.order !== 1 && !(r.order === 2 && r.label === 'H1')) return;
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', xAt(i)); label.setAttribute('y', H - 8);
+    label.setAttribute('text-anchor', 'middle'); label.setAttribute('class', 'axis-text');
+    label.textContent = r.year;
+    svg.appendChild(label);
+  });
+
+  const hitSlot = plotW / n;
+  rows.forEach((r, i) => {
+    const hit = document.createElementNS(ns, 'rect');
+    hit.setAttribute('x', xAt(i) - hitSlot / 2); hit.setAttribute('y', padT);
+    hit.setAttribute('width', hitSlot); hit.setAttribute('height', plotH);
+    hit.setAttribute('class', 'bar-hit');
+    hit.addEventListener('mousemove', ev => {
+      tooltip.style.display = 'block';
+      tooltip.style.left = (ev.clientX + 12) + 'px';
+      tooltip.style.top = (ev.clientY - 10) + 'px';
+      tooltip.innerHTML = r.uncovered
+        ? `${r.year} ${r.label}<br>not yet loaded`
+        : `${r.year} ${r.label}<br>All: ${def.fmt(def.getAll(r))}<br>Exclusive: ${def.fmt(def.getExcl(r))}`;
+    });
+    hit.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    svg.appendChild(hit);
+  });
+
+  const baseline = document.createElementNS(ns, 'line');
+  baseline.setAttribute('x1', padL); baseline.setAttribute('x2', W - padR);
+  baseline.setAttribute('y1', padT + plotH); baseline.setAttribute('y2', padT + plotH);
+  baseline.setAttribute('stroke', 'var(--baseline)'); baseline.setAttribute('stroke-width', '1');
+  svg.appendChild(baseline);
+}
+
+// Re-render the chart whenever the SVG's laid-out width changes — covers both the initial
+// boot race (first render can fire mid-layout and bake a tiny width into the viewBox) and
+// ordinary window resizes. Debounced; skips when no series is loaded yet.
+let lastChartW = 0;
+new ResizeObserver(entries => {
+  const w = entries[0].contentRect.width;
+  if (Math.abs(w - lastChartW) < 2) return;
+  lastChartW = w;
+  if (topicSeriesRows.length) renderMetric();
+}).observe(document.getElementById('topic-chart'));
+
+// ---------- Tabs ----------
+
+function switchView(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+}
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchView(btn.dataset.view));
+});
+
+// ---------- Boot ----------
+
+loadData().then(async () => {
+  buildRangeOptions();
+  await loadTopicsConfig();
+  await runTopicQuery();
+  await runBrowseSearch();
+}).catch(err => {
+  statusEl.textContent = 'Failed to load: ' + err.message;
+  console.error(err);
+});
+</script>

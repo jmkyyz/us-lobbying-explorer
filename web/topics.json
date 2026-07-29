@@ -1,0 +1,42 @@
+{
+  "tariffs": {
+    "label": "Tariffs",
+    "general_issue_codes": ["TAR", "TRD"],
+    "keywords": ["tariff", "tariffs", "section 232", "section 301", "countervailing duty", "antidumping", "anti-dumping"]
+  },
+  "canada": {
+    "label": "Canada",
+    "general_issue_codes": [],
+    "keywords": ["canada", "canadian", "usmca", "nafta", "softwood lumber"]
+  },
+  "china": {
+    "label": "China",
+    "general_issue_codes": [],
+    "keywords": ["china", "chinese", "prc", "beijing"]
+  },
+  "usmca": {
+    "label": "USMCA / Trade Agreements",
+    "general_issue_codes": ["TRD", "FOR"],
+    "keywords": ["usmca", "nafta", "free trade agreement", "trade agreement"]
+  },
+  "immigration": {
+    "label": "Immigration",
+    "general_issue_codes": ["IMM"],
+    "keywords": ["immigration", "visa", "visas", "asylum", "border security", "daca"]
+  },
+  "ai_datacenters": {
+    "label": "AI / Data Centers",
+    "general_issue_codes": ["SCI", "CPI", "COM"],
+    "keywords": ["artificial intelligence", "ai", "data center", "data centers", "data centre", "machine learning", "generative ai"]
+  },
+  "energy": {
+    "label": "Energy",
+    "general_issue_codes": ["ENG", "FUE", "NAT"],
+    "keywords": ["energy", "oil", "natural gas", "pipeline", "nuclear", "renewable", "solar", "wind power"]
+  },
+  "healthcare": {
+    "label": "Healthcare",
+    "general_issue_codes": ["HCR", "MMM", "PHA", "MED"],
+    "keywords": ["health care", "healthcare", "medicare", "medicaid", "drug pricing", "prescription drug", "prescription drugs"]
+  }
+}

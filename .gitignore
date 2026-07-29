@@ -1,0 +1,14 @@
+data/*.duckdb
+data/*.duckdb.wal
+data/publish/
+__pycache__/
+*.pyc
+.env
+lda_weekly_state.json
+node_modules/
+package-lock.json
+*.log
+*.bak
+
+# web/static/vendor/ (duckdb-wasm bundle) is committed on purpose — no build step
+# needed at deploy time. Regenerate via: npm install --no-save @duckdb/duckdb-wasm
