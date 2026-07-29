@@ -1,0 +1,9 @@
+// Cloudflare Workers config: serve the static frontend from web/ (no build step).
+// The dashboard's Git integration runs `npx wrangler deploy`, which reads this file.
+{
+  "name": "us-lobbying",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./web"
+  }
+}
