@@ -181,6 +181,9 @@ def upload():
 
 
 def main():
+    from ingest import load_dotenv
+    load_dotenv()  # R2_* creds live in .env; direct CLI runs need them too, not just refresh.py
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage", action="store_true")
     parser.add_argument("--upload", action="store_true")
