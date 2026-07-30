@@ -128,6 +128,8 @@
   .chart-caption { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; max-width: 720px; }
   .metric-picker { display: flex; gap: 6px; margin-bottom: 12px; }
   .range-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+  .scope-toggle { display: inline-flex; gap: 4px; margin-left: auto; }
+  .scope-pill { padding: 4px 10px; font-size: 12px; }
   .clients-count { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
   .clients-scroll.expanded { max-height: 540px; overflow-y: auto; border-bottom: 1px solid var(--gridline); }
   .range-row select {
@@ -227,6 +229,10 @@
         <div class="range-row">
           <label>Filed from <select id="range-from"></select></label>
           <label>to <select id="range-to"></select></label>
+          <span class="scope-toggle">
+            <button class="topic-pill scope-pill active" data-scope="all">All mentions</button>
+            <button class="topic-pill scope-pill" data-scope="exclusive">Exclusively this topic</button>
+          </span>
         </div>
         <div id="topic-clients-table"></div>
       </div>
@@ -670,7 +676,27 @@ function rangeClause() {
 
 let topicClientsAll = [];      // full ranked client list for the current topic + range
 let topicClientsExpanded = false;
+let clientsExclusiveOnly = false;
 const CLIENTS_PREVIEW = 20;
+
+// "Exclusively this topic" uses the same definition as the chart's dashed line: filings whose
+// ONLY reported issue code is the one that matched. Expressed as a semi-join on filing_uuid
+// rather than a table join — activities and filings share column names (dt_posted, client_id,
+// filing_year…), so joining them would make the existing clause builders ambiguous.
+function exclusiveClause() {
+  return clientsExclusiveOnly
+    ? ' AND filing_uuid IN (SELECT filing_uuid FROM filings WHERE len(issue_codes) = 1)'
+    : '';
+}
+
+document.querySelectorAll('.scope-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    clientsExclusiveOnly = btn.dataset.scope === 'exclusive';
+    document.querySelectorAll('.scope-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    runTopicClients();
+  });
+});
 
 async function runTopicClients() {
   if (!activeTopic && !activeAdhoc) return;
@@ -679,7 +705,7 @@ async function runTopicClients() {
   // decides how much to show.
   topicClientsAll = await q(
     `SELECT client_name, client_id, count(*) AS n FROM activities
-     WHERE ${activitiesWhere} AND client_name IS NOT NULL${rangeClause()}
+     WHERE ${activitiesWhere} AND client_name IS NOT NULL${rangeClause()}${exclusiveClause()}
      GROUP BY client_name, client_id ORDER BY n DESC`
   );
   topicClientsExpanded = false;
@@ -799,7 +825,8 @@ function renderTopicClientsTable() {
     : '';
 
   wrap.innerHTML = `
-    <div class="clients-count">${total.toLocaleString()} client${total === 1 ? '' : 's'} in this window${
+    <div class="clients-count">${total.toLocaleString()} client${total === 1 ? '' : 's'}${
+      clientsExclusiveOnly ? ' lobbying <b>exclusively</b> on this topic' : ' mentioning this topic'} in this window${
       topicClientsExpanded || total <= CLIENTS_PREVIEW ? '' : ` · showing top ${CLIENTS_PREVIEW}`}</div>
     <div class="clients-scroll${topicClientsExpanded ? ' expanded' : ''}">
       <table><thead><tr><th>Client</th><th>Activities</th></tr></thead><tbody>${body}</tbody></table>
@@ -879,7 +906,7 @@ document.getElementById('export-clients').addEventListener('click', () => {
   if (!topicClientsAll.length) return;
   const label = document.getElementById('topic-chart-title').dataset.label || 'topic';
   downloadCSV(
-    `lobbying-${slug(label)}-clients${rangeSuffix()}.csv`,
+    `lobbying-${slug(label)}-clients${clientsExclusiveOnly ? '-exclusive' : ''}${rangeSuffix()}.csv`,
     ['rank', 'client', 'client_id', 'activities'],
     topicClientsAll.map((r, i) => [i + 1, r.client_name, r.client_id, r.n])
   );
@@ -937,7 +964,7 @@ async function openClientTopicModal(clientName, clientId) {
   const baseQuery = cols => `
     SELECT ${cols}
     FROM activities
-    WHERE (${activitiesWhere}) AND client_id = ${parseInt(clientId, 10)}${rangeClause()}
+    WHERE (${activitiesWhere}) AND client_id = ${parseInt(clientId, 10)}${rangeClause()}${exclusiveClause()}
     ORDER BY dt_posted DESC`;
   let rows;
   try {
