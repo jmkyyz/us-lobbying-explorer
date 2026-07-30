@@ -9,6 +9,11 @@
     "general_issue_codes": [],
     "keywords": ["canada", "canadian"]
   },
+  "softwood_lumber": {
+    "label": "Softwood lumber",
+    "general_issue_codes": [],
+    "keywords": ["softwood", "lumber duty", "lumber duties", "lumber tariff", "lumber tariffs"]
+  },
   "china": {
     "label": "China",
     "general_issue_codes": [],

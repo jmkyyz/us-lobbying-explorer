@@ -128,6 +128,12 @@
   .chart-caption { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; max-width: 720px; }
   .metric-picker { display: flex; gap: 6px; margin-bottom: 12px; }
   .range-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+  .field-hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; max-width: 340px; line-height: 1.5; }
+  .field-hint code {
+    background: var(--page); border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 3px; font-size: 10.5px;
+  }
+  .adhoc-warning { font-size: 11.5px; color: var(--text-muted); align-self: center; }
   .scope-toggle { display: inline-flex; gap: 4px; margin-left: auto; }
   .scope-pill { padding: 4px 10px; font-size: 12px; }
   .clients-count { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
@@ -192,10 +198,15 @@
     <div class="topic-picker" id="topic-picker"></div>
     <div class="filter-bar" style="margin-bottom:14px">
       <div class="field">
-        <label>Or search any keyword</label>
-        <input id="topic-adhoc" placeholder="e.g. lumber, drone, semiconductor" style="width:260px">
+        <label>Or search the filing text</label>
+        <input id="topic-adhoc" placeholder='e.g. softwood lumber, or: tariff AND canada -china' style="width:340px">
+        <div class="field-hint">
+          Supports <code>AND</code> · <code>OR</code> · <code>NOT</code> (or <code>-word</code>) ·
+          <code>"exact phrase"</code> · <code>(grouping)</code>. Spaces mean AND. Whole words only.
+        </div>
       </div>
       <button class="primary" id="btn-topic-adhoc">Search text</button>
+      <span id="adhoc-warning" class="adhoc-warning"></span>
     </div>
 
     <div class="metric-picker" id="metric-picker">
@@ -508,7 +519,9 @@ function escapeHtml(s) {
 
 async function loadTopicsConfig() {
   // Lives inside web/ so the same relative path works when web/ is deployed as the site root.
-  TOPICS = await fetch('./topics.json').then(r => r.json()).catch(() => ({}));
+  // no-cache: this file changes whenever topics are added/retuned, and a stale cached copy
+  // silently hides new topics from returning visitors (observed in testing).
+  TOPICS = await fetch('./topics.json', { cache: 'no-cache' }).then(r => r.json()).catch(() => ({}));
   const picker = document.getElementById('topic-picker');
   picker.innerHTML = Object.entries(TOPICS).map(([key, cfg]) =>
     `<button class="topic-pill" data-topic="${key}">${cfg.label}</button>`
@@ -534,7 +547,12 @@ function runAdhocTopic() {
   if (!kw) return;
   activeAdhoc = kw;
   activeTopic = null;
-  document.querySelectorAll('.topic-pill').forEach(b => b.classList.remove('active'));
+  // Only clear topic pills — .topic-pill is also the class on the metric/scope pills, so
+  // selecting all of them would wipe those selections too.
+  document.querySelectorAll('#topic-picker .topic-pill').forEach(b => b.classList.remove('active'));
+  const { error } = adhocWhere(kw);
+  document.getElementById('adhoc-warning').textContent =
+    error ? `Couldn't parse (${error}) — searched as a literal phrase.` : '';
   runTopicQuery();
 }
 document.getElementById('btn-topic-adhoc').addEventListener('click', runAdhocTopic);
@@ -553,10 +571,98 @@ document.querySelectorAll('.metric-pill').forEach(btn => {
 
 // Matches at the FILING level (not activity level) so a filing's total reported income isn't
 // double-counted if more than one of its activities happens to mention the same topic.
+// ---------- Ad-hoc boolean query parser ----------
+//
+// Grammar (AND binds tighter than OR, matching normal search convention):
+//   expr  := or
+//   or    := and (OR and)*
+//   and   := unary (AND? unary)*        -- adjacency implies AND
+//   unary := (NOT | -) unary | '(' expr ')' | phrase | word
+//
+// Terms match on WORD BOUNDARIES, same as the curated topics — a plain substring match
+// would make "ai" hit "said"/"maintain".
+
+function tokenizeQuery(s) {
+  const out = [];
+  // Bare words use [^\s()]+ rather than \S+ so a trailing paren isn't swallowed into the
+  // word — "(a OR b)" must tokenize as ( a OR b ), not ( a OR "b)".
+  const re = /"([^"]*)"|(\()|(\))|([^\s()]+)/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    if (m[1] !== undefined) { out.push({ t: 'term', v: m[1] }); continue; }
+    if (m[2]) { out.push({ t: '(' }); continue; }
+    if (m[3]) { out.push({ t: ')' }); continue; }
+    const w = m[4];
+    const up = w.toUpperCase();
+    if (up === 'AND') out.push({ t: 'AND' });
+    else if (up === 'OR') out.push({ t: 'OR' });
+    else if (up === 'NOT') out.push({ t: 'NOT' });
+    else if (w.length > 1 && w[0] === '-') { out.push({ t: 'NOT' }); out.push({ t: 'term', v: w.slice(1) }); }
+    else out.push({ t: 'term', v: w });
+  }
+  return out;
+}
+
+function termSql(word) {
+  // Escape regex metacharacters, then the SQL string quote.
+  const rx = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "''");
+  return `regexp_matches(description, '\\b${rx}\\b', 'i')`;
+}
+
+function parseQuery(input) {
+  const toks = tokenizeQuery(input);
+  let i = 0;
+  const peek = () => toks[i];
+
+  function parseOr() {
+    let left = parseAnd();
+    while (peek() && peek().t === 'OR') { i++; left = `(${left} OR ${parseAnd()})`; }
+    return left;
+  }
+  function parseAnd() {
+    let left = parseUnary();
+    while (peek() && (peek().t === 'AND' || peek().t === 'term' || peek().t === 'NOT' || peek().t === '(')) {
+      if (peek().t === 'AND') i++;              // explicit AND
+      if (!peek() || peek().t === 'OR' || peek().t === ')') break;
+      left = `(${left} AND ${parseUnary()})`;
+    }
+    return left;
+  }
+  function parseUnary() {
+    const tk = peek();
+    if (!tk) throw new Error('unexpected end of query');
+    if (tk.t === 'NOT') { i++; return `(NOT ${parseUnary()})`; }
+    if (tk.t === '(') {
+      i++;
+      const inner = parseOr();
+      if (!peek() || peek().t !== ')') throw new Error('missing closing parenthesis');
+      i++;
+      return `(${inner})`;
+    }
+    if (tk.t === 'term') { i++; return termSql(tk.v); }
+    throw new Error(`unexpected token ${tk.t}`);
+  }
+
+  const sql = parseOr();
+  if (i < toks.length) throw new Error('unexpected trailing input');
+  return sql;
+}
+
+function adhocWhere(query) {
+  try {
+    const sql = parseQuery(query);
+    return { sql, error: null };
+  } catch (e) {
+    // Unparseable (stray paren, dangling operator) — treat the whole input as one phrase
+    // rather than erroring out on the user.
+    return { sql: termSql(query), error: e.message };
+  }
+}
+
 function topicMatchInfo() {
   if (activeAdhoc) {
     return {
-      activitiesWhere: `lower(description) LIKE '%${esc(activeAdhoc.toLowerCase())}%'`,
+      activitiesWhere: adhocWhere(activeAdhoc).sql,
       label: `"${activeAdhoc}"`,
     };
   }
