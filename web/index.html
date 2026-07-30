@@ -137,6 +137,7 @@
   .scope-toggle { display: inline-flex; gap: 4px; margin-left: auto; }
   .scope-pill { padding: 4px 10px; font-size: 12px; }
   .clients-count { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+  .id-note { font-size: 10px; color: var(--text-muted); margin-left: 5px; cursor: help; }
   .clients-scroll.expanded { max-height: 540px; overflow-y: auto; border-bottom: 1px solid var(--gridline); }
   .range-row select {
     font-family: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 5px;
@@ -818,10 +819,21 @@ async function runTopicClients() {
   const { activitiesWhere } = topicMatchInfo();
   // No LIMIT — the full list stays in memory (client-side query, instant) and the renderer
   // decides how much to show.
+  // Two counting rules that both matter here:
+  //  - count(DISTINCT filing_uuid), not count(*): a filing yields one activity row per issue
+  //    code (usually with identical text), so counting rows ranks clients partly by how many
+  //    codes they tick (Sports & Fitness: 116 rows / 64 filings; Walmart: 94 / 94).
+  //  - GROUP BY client_name, NOT client_id: one organisation holds a separate client_id per
+  //    registrant it hires, so grouping by id split National Fisheries into three rows
+  //    (57/35/17 of its 109 filings) and buried it in the ranking.
+  // Both now match how the chart counts.
   topicClientsAll = await q(
-    `SELECT client_name, client_id, count(*) AS n FROM activities
+    `SELECT client_name, count(DISTINCT filing_uuid) AS n,
+            count(DISTINCT client_id) AS id_count,
+            string_agg(DISTINCT client_id::VARCHAR, ';') AS client_ids
+     FROM activities
      WHERE ${activitiesWhere} AND client_name IS NOT NULL${rangeClause()}${exclusiveClause()}
-     GROUP BY client_name, client_id ORDER BY n DESC`
+     GROUP BY client_name ORDER BY n DESC`
   );
   topicClientsExpanded = false;
   renderTopicClientsTable();
@@ -930,7 +942,8 @@ function renderTopicClientsTable() {
 
   const body = rows.map(r => `
     <tr>
-      <td><a class="client-link" data-client="${encodeURIComponent(r.client_name)}" data-client-id="${r.client_id}">${escapeHtml(r.client_name)}</a></td>
+      <td><a class="client-link" data-client="${encodeURIComponent(r.client_name)}">${escapeHtml(r.client_name)}</a>${
+        r.id_count > 1 ? `<span class="id-note" title="Filed via ${r.id_count} registrant relationships">×${r.id_count}</span>` : ''}</td>
       <td class="num">${r.n}</td>
     </tr>`).join('');
 
@@ -944,12 +957,12 @@ function renderTopicClientsTable() {
       clientsExclusiveOnly ? ' lobbying <b>exclusively</b> on this topic' : ' mentioning this topic'} in this window${
       topicClientsExpanded || total <= CLIENTS_PREVIEW ? '' : ` · showing top ${CLIENTS_PREVIEW}`}</div>
     <div class="clients-scroll${topicClientsExpanded ? ' expanded' : ''}">
-      <table><thead><tr><th>Client</th><th>Activities</th></tr></thead><tbody>${body}</tbody></table>
+      <table><thead><tr><th>Client</th><th>Filings</th></tr></thead><tbody>${body}</tbody></table>
     </div>${toggle}`;
 
   wrap.querySelectorAll('.client-link').forEach(el => {
     el.addEventListener('click', () => {
-      openClientTopicModal(decodeURIComponent(el.dataset.client), el.dataset.clientId);
+      openClientTopicModal(decodeURIComponent(el.dataset.client));
     });
   });
   document.getElementById('clients-toggle')?.addEventListener('click', () => {
@@ -1022,8 +1035,8 @@ document.getElementById('export-clients').addEventListener('click', () => {
   const label = document.getElementById('topic-chart-title').dataset.label || 'topic';
   downloadCSV(
     `lobbying-${slug(label)}-clients${clientsExclusiveOnly ? '-exclusive' : ''}${rangeSuffix()}.csv`,
-    ['rank', 'client', 'client_id', 'activities'],
-    topicClientsAll.map((r, i) => [i + 1, r.client_name, r.client_id, r.n])
+    ['rank', 'client', 'filings', 'registrant_relationships', 'client_ids'],
+    topicClientsAll.map((r, i) => [i + 1, r.client_name, r.n, r.id_count, r.client_ids])
   );
 });
 
@@ -1074,12 +1087,12 @@ function groupActivities(rows) {
   return Array.from(groups.values()).sort((a, b) => b.filing_year - a.filing_year);
 }
 
-async function openClientTopicModal(clientName, clientId) {
+async function openClientTopicModal(clientName) {
   const { activitiesWhere, label } = topicMatchInfo();
   const baseQuery = cols => `
     SELECT ${cols}
     FROM activities
-    WHERE (${activitiesWhere}) AND client_id = ${parseInt(clientId, 10)}${rangeClause()}${exclusiveClause()}
+    WHERE (${activitiesWhere}) AND client_name = '${esc(clientName)}'${rangeClause()}${exclusiveClause()}
     ORDER BY dt_posted DESC`;
   let rows;
   try {
