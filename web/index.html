@@ -202,7 +202,8 @@
         <input id="topic-adhoc" placeholder='e.g. softwood lumber, or: tariff AND canada -china' style="width:340px">
         <div class="field-hint">
           Supports <code>AND</code> · <code>OR</code> · <code>NOT</code> (or <code>-word</code>) ·
-          <code>"exact phrase"</code> · <code>(grouping)</code>. Spaces mean AND. Whole words only.
+          <code>"exact phrase"</code> · <code>(grouping)</code>. Spaces mean AND. Whole words only.<br>
+          Use <code>code:TAR</code> to filter by official issue code (e.g. <code>code:TAR AND canada</code>).
         </div>
       </div>
       <button class="primary" id="btn-topic-adhoc">Search text</button>
@@ -604,6 +605,14 @@ function tokenizeQuery(s) {
 }
 
 function termSql(word) {
+  // `code:XXX` filters on the official LDA issue code rather than the description text.
+  // Without this, typing a code like TAR searches for the literal word "tar" — which mostly
+  // finds filers who happen to embed code prefixes in their prose, not TAR-coded filings.
+  const m = /^code:(.+)$/i.exec(word);
+  if (m) {
+    const code = m[1].toUpperCase().replace(/'/g, "''");
+    return `upper(general_issue_code) = '${code}'`;
+  }
   // Escape regex metacharacters, then the SQL string quote.
   const rx = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "''");
   return `regexp_matches(description, '\\b${rx}\\b', 'i')`;
