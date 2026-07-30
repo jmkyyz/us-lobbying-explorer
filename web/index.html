@@ -497,16 +497,67 @@ function renderBrowseTable(rows) {
     </table>`;
   document.querySelectorAll('.client-link').forEach(el => {
     el.addEventListener('click', () => {
-      document.getElementById('f-client').value = decodeURIComponent(el.dataset.client);
-      document.getElementById('f-registrant').value = '';
-      document.getElementById('f-year').value = '';
-      document.getElementById('f-issue').value = '';
-      document.getElementById('f-entity').value = '';
-      document.getElementById('f-firsttime').checked = false;
-      switchView('browse');
-      runBrowseSearch();
+      openClientBrowseModal(decodeURIComponent(el.dataset.client));
     });
   });
+}
+
+// Client detail popup for the Browse tab — mirrors the Topic Explorer's client modal
+// (openClientTopicModal below), but has no topic to restrict to: it shows every activity
+// for the client, narrowed by whatever year/issue filters are currently set in the browse bar.
+async function openClientBrowseModal(clientName) {
+  const year = document.getElementById('f-year').value.trim();
+  const issue = document.getElementById('f-issue').value.trim();
+  const scopeClauses = [`client_name = '${esc(clientName)}'`];
+  if (year) scopeClauses.push(`filing_year = ${parseInt(year, 10) || 0}`);
+  if (issue) scopeClauses.push(`general_issue_code = '${esc(issue.toUpperCase())}'`);
+  const where = scopeClauses.join(' AND ');
+
+  const baseQuery = cols => `
+    SELECT ${cols}
+    FROM activities
+    WHERE ${where}
+    ORDER BY dt_posted DESC`;
+  let rows;
+  try {
+    rows = await q(baseQuery(
+      'general_issue_code, general_issue_code_display, description, filing_year, filing_period_display, registrant_name'
+    ));
+  } catch (e) {
+    rows = await q(baseQuery(
+      'general_issue_code, general_issue_code_display, description, filing_year, NULL AS filing_period_display, registrant_name'
+    ));
+  }
+
+  document.getElementById('modal-client-name').textContent = clientName;
+  document.getElementById('modal-topic-name').textContent = (year || issue)
+    ? `Activity ${year ? `in ${year}` : ''}${year && issue ? ', ' : ''}${issue ? `under issue code ${issue.toUpperCase()}` : ''}`
+    : 'All lobbying activity on file for this client';
+  document.getElementById('modal-body').innerHTML = rows.length
+    ? groupActivities(rows).map(g => `
+        <div class="activity-card">
+          <div class="issue-chips">
+            ${g.codes.map(c => `<span class="issue-code" title="${escapeHtml(c.display || '')}">${c.code || ''}</span>`).join('')}
+          </div>
+          <div class="meta">
+            <span>${escapeHtml(g.registrant_name || '')}</span>
+            <span>${g.filing_year}${g.periods.length ? ' · ' + g.periods.join(', ') : ''}</span>
+          </div>
+          <div class="desc">${escapeHtml(g.description || '(no description text on this filing)')}</div>
+        </div>`).join('')
+    : '<div style="color:var(--text-muted);font-size:12.5px">No matching activity text found.</div>';
+
+  document.getElementById('modal-view-all').onclick = () => {
+    closeModal();
+    document.getElementById('f-client').value = clientName;
+    document.getElementById('f-registrant').value = '';
+    document.getElementById('f-year').value = '';
+    document.getElementById('f-issue').value = '';
+    document.getElementById('f-entity').value = '';
+    document.getElementById('f-firsttime').checked = false;
+    runBrowseSearch();
+  };
+  document.getElementById('modal-overlay').classList.add('open');
 }
 
 document.getElementById('btn-search').addEventListener('click', () => runBrowseSearch());
