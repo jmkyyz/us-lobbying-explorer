@@ -15,6 +15,7 @@ import schema
 from normalize import tag_topics, build_org_first_seen
 
 STAGE_DIR = "data/publish/parquet"
+WASM_PATH = "vendor/duckdb-eh.wasm"
 ROW_GROUP_SIZE = 500_000
 
 
@@ -161,10 +162,15 @@ def upload():
 
     local_files = [f for f in os.listdir(STAGE_DIR) if not f.startswith(".")]
 
-    # Sync: delete anything under the prefix that isn't in this run's file set.
+    # Sync: delete stale data files sitting DIRECTLY under the prefix. Never touch
+    # subdirectories — lda/vendor/ holds the duckdb wasm binary, which isn't part of the
+    # staged data set and was silently deleted by an earlier version of this sweep.
     existing = s3.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/").get("Contents", [])
     keep_keys = {f"{prefix}/{name}" for name in local_files}
-    stale = [obj["Key"] for obj in existing if obj["Key"] not in keep_keys]
+    stale = [
+        obj["Key"] for obj in existing
+        if obj["Key"] not in keep_keys and "/" not in obj["Key"][len(prefix) + 1:]
+    ]
     if stale:
         s3.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": k} for k in stale]})
         print(f"deleted {len(stale)} stale object(s)")
@@ -178,6 +184,20 @@ def upload():
             ExtraArgs={"CacheControl": cache_control, "ContentType": content_type},
         )
         print(f"uploaded {key}")
+
+    # The duckdb wasm engine ships from R2 too (34MB exceeds Cloudflare Workers' 25MiB
+    # per-asset cap). Upload it if missing so a fresh bucket is self-sufficient; it's
+    # immutable, so skip the transfer when it's already there.
+    wasm_key = f"{prefix}/vendor/{os.path.basename(WASM_PATH)}"
+    try:
+        s3.head_object(Bucket=bucket, Key=wasm_key)
+    except s3.exceptions.ClientError:
+        s3.upload_file(
+            WASM_PATH, bucket, wasm_key,
+            ExtraArgs={"ContentType": "application/wasm",
+                       "CacheControl": "public, max-age=31536000"},
+        )
+        print(f"uploaded {wasm_key}")
 
 
 def main():
