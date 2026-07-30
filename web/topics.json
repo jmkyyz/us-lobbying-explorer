@@ -7,7 +7,13 @@
   "canada": {
     "label": "Canada",
     "general_issue_codes": [],
-    "keywords": ["canada", "canadian"]
+    "keywords": ["canada", "canadian"],
+    "strip_patterns": [
+      "u\\.?s\\.?[-— ]*mexico[-— ]*canada(\\s+agreement)?",
+      "united states[-— ]*mexico[-— ]*canada(\\s+agreement)?",
+      "canada[-— ]*u\\.?s\\.?[-— ]*mexico(\\s+agreement)?",
+      "mexico[-— ]*canada(\\s+agreement)?"
+    ]
   },
   "softwood_lumber": {
     "label": "Softwood lumber",

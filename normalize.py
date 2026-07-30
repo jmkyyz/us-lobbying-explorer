@@ -55,6 +55,14 @@ def tag_topics(con: duckdb.DuckDBPyConnection, topics_path: str = TOPICS_PATH) -
     "ai" must not fire inside "said"/"maintain", and "AI." / "AI," must still match, which
     the old LIKE-with-padded-spaces approach got wrong on both counts.
 
+    A topic may also declare `strip_patterns`: regexes removed from the description BEFORE
+    keyword matching. This handles a keyword that hides inside an unrelated proper noun —
+    "Canada" sits inside "United States-Mexico-Canada Agreement", and the hyphen forms a word
+    boundary, so a plain \bcanada\b match counts trilateral treaty lobbying as Canada
+    lobbying. Stripping the phrase (rather than excluding the whole filing) keeps filings
+    that discuss BOTH: "USMCA implementation and Canadian softwood duties" still matches on
+    "Canadian", while a filing that only names the agreement no longer does.
+
     Runs once at publish time (not per query) — the frontend just filters on the
     precomputed tags. Re-running is idempotent (clears and rebuilds).
     """
@@ -65,9 +73,16 @@ def tag_topics(con: duckdb.DuckDBPyConnection, topics_path: str = TOPICS_PATH) -
     for topic_key, cfg in topics.items():
         codes = cfg.get("general_issue_codes") or []
         keywords = cfg["keywords"]
+        strip_patterns = cfg.get("strip_patterns") or []
 
         # One combined alternation per topic: \b(kw1|kw2|...)\b, case-insensitive.
         pattern = r"\b(" + "|".join(re.escape(kw.strip()) for kw in keywords) + r")\b"
+
+        # strip_patterns are authored as regexes (not literals), so they are NOT escaped.
+        haystack = "description"
+        if strip_patterns:
+            combined = "|".join(strip_patterns)
+            haystack = f"regexp_replace(description, '{combined.replace(chr(39), chr(39) * 2)}', ' ', 'gi')"
 
         code_clause = ""
         if codes:
@@ -78,7 +93,7 @@ def tag_topics(con: duckdb.DuckDBPyConnection, topics_path: str = TOPICS_PATH) -
             INSERT INTO activity_topics (activity_id, topic_key)
             SELECT activity_id, ? FROM lobbying_activities
             WHERE description IS NOT NULL
-              AND regexp_matches(description, ?, 'i') {code_clause}
+              AND regexp_matches({haystack}, ?, 'i') {code_clause}
         """
         params = [topic_key, pattern] + list(codes)
 
