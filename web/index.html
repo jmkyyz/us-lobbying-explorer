@@ -309,12 +309,18 @@
 import * as duckdb from './static/vendor/duckdb-bundle.mjs';
 
 const params = new URLSearchParams(location.search);
-// Data source resolution: ?data= override → window.DATA_BASE → localhost dev fallback
-// (repo served from its root) → production R2 bucket.
-const DATA_BASE = params.get('data') || window.DATA_BASE ||
-  (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-    ? '../data/publish/parquet'
-    : 'https://pub-6990a52a75864d00a6e26bbb127e7498.r2.dev/lda');
+const R2_BASE = 'https://pub-6990a52a75864d00a6e26bbb127e7498.r2.dev/lda';
+const IS_LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+// Candidates tried in order until one serves a manifest. On localhost we prefer freshly
+// staged local parquet, but fall back to R2 so a fresh clone (which has no data/ directory)
+// still runs without anyone building a 3GB database first.
+const DATA_CANDIDATES =
+  params.get('data') ? [params.get('data')]
+  : window.DATA_BASE ? [window.DATA_BASE]
+  : IS_LOCAL ? ['../data/publish/parquet', R2_BASE]
+  : [R2_BASE];
+let DATA_BASE = DATA_CANDIDATES[0];
 
 const statusEl = document.getElementById('status-pill');
 let db, conn;
@@ -348,7 +354,17 @@ async function loadData() {
   await initDuckDB();
 
   statusEl.textContent = 'Fetching manifest…';
-  const manifest = await fetch(`${DATA_BASE}/manifest.json`, { cache: 'no-cache' }).then(r => r.json());
+  let manifest = null;
+  for (const base of DATA_CANDIDATES) {
+    try {
+      const r = await fetch(`${base}/manifest.json`, { cache: 'no-cache' });
+      if (!r.ok) continue;
+      manifest = await r.json();
+      DATA_BASE = base;
+      break;
+    } catch (e) { /* try the next candidate */ }
+  }
+  if (!manifest) throw new Error(`no data source reachable (tried: ${DATA_CANDIDATES.join(', ')})`);
   MANIFEST = manifest;
   manifestVersion = manifest.version;
   SHOW_FIRST_TIME = manifest.first_time_reliable === true;
