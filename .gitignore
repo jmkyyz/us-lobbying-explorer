@@ -12,3 +12,6 @@ package-lock.json
 
 # web/static/vendor/ (duckdb-wasm bundle) is committed on purpose — no build step
 # needed at deploy time. Regenerate via: npm install --no-save @duckdb/duckdb-wasm
+
+# Bulk XML ZIPs from the House Clerk (~3GB) — re-downloadable, never committed
+data/house_zips/

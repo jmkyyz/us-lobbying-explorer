@@ -1,13 +1,26 @@
 """Pull LDA filings from the REST API into the local DuckDB store (data/lda.duckdb).
 
+SUPERSEDED as of 2026-08-26 — the live pipeline is ingest_house.py. This module is kept
+because the API is genuinely richer (global client ids, stable lobbyist ids, filing UUIDs),
+so it is worth returning to if access is ever restored.
+
+Why it stopped working, corrected: an earlier note here guessed that lda.gov "403s regardless
+of User-Agent... not actually live yet". That was wrong, and the wrong diagnosis cost three
+weeks of silent staleness. The API is live and complete — it served 1,976,387 filings when
+loaded in a real browser from the same machine and IP that curl was being refused from,
+seconds apart. lda.gov sits behind an Akamai rule that fingerprints the CLIENT below the HTTP
+layer: browsers pass, curl and python-requests get a blanket 403 on every path on the host.
+Confirmed dead ends, all still 403: the API key (with and without), any User-Agent, HTTP/2,
+full browser header sets, and the old lda.senate.gov host (which now 301s to lda.gov).
+
+So LDA_API_BASE cannot fix this on its own — repointing only helps if a host appears that
+does not fingerprint clients. Before assuming it is fixed, check for a non-403 from a plain
+client, not from a browser:
+    curl -sI "https://lda.gov/api/v1/filings/?page_size=1"
+
 Auth: Authorization: Token <LDA_API_KEY> header (confirmed format; register a free key at
 https://lda.senate.gov/api/register/ — that signup step is manual, not automated here).
 Anonymous access works but is capped at 15 req/min vs. 120 req/min with a key.
-
-Base URL: lda.senate.gov (the documented "successor" lda.gov currently 403s regardless of
-User-Agent as of 2026-07-28 — not actually live yet despite the deprecation/Link headers
-pointing to it). Override via LDA_API_BASE if/when lda.gov starts working, ideally before its
-sunset date. This is a one-line env var change, no code change needed.
 
 Usage:
     python3 ingest.py --backfill --filing-year 2024

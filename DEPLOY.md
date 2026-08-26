@@ -35,12 +35,19 @@ R2_PREFIX=lda
 6. Upload: `python3 publish.py --stage --upload`
 7. Verify: `curl -sI https://pub-….r2.dev/lda/manifest.json` → 200 with `cache-control: no-cache`.
 
-## 2. Cloudflare Pages (frontend)
+## 2. Cloudflare Workers (frontend)
 
-1. Dashboard → Workers & Pages → **Create → Pages → Connect to Git** →
+Live at https://us-lobbying.jasonkirby.workers.dev — served as **Workers static assets**
+via `wrangler.jsonc`, not Pages. Cloudflare no longer offers the classic Pages
+connect-to-Git flow for new projects, so these steps describe what is actually deployed:
+
+1. Dashboard → Workers & Pages → project `us-lobbying` → **Build** section, connected to
    `jmkyyz/us-lobbying-explorer`.
-2. Build settings: **no build command**, output directory = `web`.
+2. No build command; `wrangler.jsonc` declares the asset directory.
 3. Every push to `main` auto-deploys.
+
+The 34MB DuckDB-WASM engine is served from R2, not from the Worker — it exceeds Workers'
+25MiB per-asset cap. `publish.py --upload` puts it there on first run.
 
 ## 3. Point the frontend at R2
 
@@ -62,9 +69,26 @@ const DATA_BASE = params.get('data') || window.DATA_BASE ||
 python3 make_refresh_plist.py     # writes the launchd plist; prints install commands
 ```
 
-The daily job pulls new filings, re-stages parquet, and — once the `R2_*` vars are in
-`.env` — uploads automatically. Browsers pick up new data via the `no-cache` manifest +
-`?v=<version>` cache-busting; no redeploy needed for data updates.
+The daily job re-parses any House quarterly ZIP whose manifest timestamp moved, re-stages
+parquet, and — once the `R2_*` vars are in `.env` — uploads automatically. Browsers pick up
+new data via the `no-cache` manifest + `?v=<version>` cache-busting; no redeploy needed for
+data updates. No API key is involved: the source is the House Clerk's public bulk downloads.
+
+Check what a run would do without doing it:
+
+```
+python3 refresh.py --dry-run              # lists each ZIP as unchanged / WOULD RE-INGEST
+python3 refresh.py --years 2013-2026      # widen beyond the default current+previous year
+```
+
+**Watch for silent staleness.** The job logs `!!! REFRESH FAILED !!!` on any error, but
+nothing alerts on it — an earlier API-side block failed every morning for 22 days unnoticed.
+A cheap health check, which needs no download:
+
+```
+curl -s https://pub-….r2.dev/lda/manifest.json | python3 -c \
+  "import json,sys; m=json.load(sys.stdin); print(m['built_at'], m['date_range'])"
+```
 
 ## Gotchas (learned on sibling apps, pre-applied here)
 

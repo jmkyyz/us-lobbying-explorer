@@ -3,17 +3,23 @@
 Designed for unattended launchd runs (see make_refresh_plist.py):
 - A pid lockfile prevents overlapping runs; a run that finds the DuckDB file locked by
   something else (e.g. a manual backfill) logs and exits cleanly instead of fighting for it.
-- Watermark = newest dt_posted already in the DB, minus a safety overlap. LDA amendments
-  arrive as NEW filings with fresh dt_posted (originals are never edited in place), so a
-  posted-date watermark catches corrections too; the overlap re-pulls a few days of already-
-  seen filings, which the uuid-keyed upsert makes harmless.
+- Source is the House Clerk's bulk XML (ingest_house.py), NOT the lda.gov REST API. The API
+  is unreachable from any non-browser client — see the header of ingest_house.py for the
+  full diagnosis. The old dt_posted watermark went with it: freshness is now decided by the
+  House manifest, which timestamps each quarterly ZIP, so an unchanged quarter costs a
+  single JSON fetch and a changed one is re-parsed in full.
+- Only the current and previous filing year are checked by default. The House does
+  occasionally re-touch much older ZIPs, and re-parsing all 70 of them would turn a daily
+  job into a multi-GB download; those are picked up by an explicit --years run instead.
 - Failures print a loud marker line — the sibling Canadian app's pipeline once failed
-  silently for 13 days, hence the noise.
+  silently for 13 days, hence the noise. That noise is what surfaced the API block here,
+  after 22 consecutive failed mornings.
 
 Usage:
     python3 refresh.py            # incremental ingest + stage (+ upload if R2 creds in .env)
     python3 refresh.py --no-upload
-    python3 refresh.py --dry-run  # show the watermark and exit
+    python3 refresh.py --dry-run  # show which ZIPs would be re-ingested and exit
+    python3 refresh.py --years 2013-2026   # widen the window (picks up old-ZIP re-touches)
 """
 
 import argparse
@@ -25,10 +31,10 @@ import duckdb
 
 import schema
 import publish
-from ingest import load_dotenv, make_session, run_incremental, set_state, DEFAULT_BASE_URL
+import ingest_house
+from ingest import load_dotenv
 
 LOCK_PATH = ".refresh.lock"
-OVERLAP_DAYS = 3
 
 
 def log(msg: str) -> None:
@@ -60,7 +66,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-upload", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--years", help="year or range, e.g. 2026 or 2013-2026")
     args = parser.parse_args()
+
+    this_year = dt.date.today().year
+    if args.years:
+        lo, _, hi = args.years.partition("-")
+        years = set(range(int(lo), int(hi or lo) + 1))
+    else:
+        years = {this_year, this_year - 1}
 
     load_dotenv()
     if not acquire_lock():
@@ -77,15 +91,22 @@ def main() -> int:
         if not row or row[0] is None:
             log("!!! REFRESH FAILED !!! DB is empty — run a backfill before scheduling refreshes")
             return 1
-        since = (row[0] - dt.timedelta(days=OVERLAP_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
-        log(f"newest filing in DB: {row[0]} — pulling since {since} ({OVERLAP_DAYS}d overlap)")
+        log(f"newest filing in DB: {row[0]} — checking House ZIPs for {sorted(years)}")
+
         if args.dry_run:
+            import requests
+            manifest = ingest_house.fetch_manifest(requests.Session())
+            for _y, entry in ingest_house.entries_for_years(manifest, years):
+                prior = con.execute(
+                    "SELECT value FROM ingest_state WHERE key = ?",
+                    [f"house_zip_{entry['file']}"],
+                ).fetchone()
+                state = "unchanged" if prior and prior[0] == entry["name"] else "WOULD RE-INGEST"
+                log(f"  {entry['file']}: {state}")
             return 0
 
-        session = make_session()
-        count = run_incremental(con, session, DEFAULT_BASE_URL, since)
-        set_state(con, "last_incremental_dt_posted", since)
-        log(f"incremental ingest done: {count} filings upserted")
+        count = ingest_house.run_refresh(con, years)
+        log(f"House ingest done: {count} filings upserted")
 
         publish.stage(con)
         log("stage done")
