@@ -8,6 +8,9 @@ import duckdb
 _PAREN_RE = re.compile(r"\([^)]*\)")
 _PUNCT_RE = re.compile(r"[^\w\s]")
 _WS_RE = re.compile(r"\s+")
+# Applied after punctuation stripping, so "The, Inc." style noise is already gone. Only a
+# leading article is removed — "the" inside a name ("Friends of the Earth") is left alone.
+_LEADING_ARTICLE_RE = re.compile(r"^the\s+")
 
 # Conservative: only strip unambiguous legal-entity suffixes, not words like "group" or
 # "holdings" that can be a real part of an org's identity. Iterative so "ABC CORP INC" -> "abc".
@@ -20,9 +23,16 @@ _LEGAL_SUFFIXES = {
 def norm_name(name: str, strip_suffixes: bool = True) -> str:
     """Normalize an org name for cross-filing identity matching.
 
-    Lowercases, strips trailing parentheticals and punctuation, collapses whitespace, and
-    (by default) strips trailing legal-entity suffixes so "Acme Corp" and "Acme Corporation"
-    collapse to the same key. Mirrors the Canadian lobbyist app's norm_name() heuristic.
+    Lowercases, strips a leading "the", strips trailing parentheticals and punctuation,
+    collapses whitespace, and (by default) strips trailing legal-entity suffixes so
+    "Acme Corp" and "Acme Corporation" collapse to the same key. Mirrors the Canadian
+    lobbyist app's norm_name() heuristic.
+
+    The leading "the" matters more than it looks: filers are inconsistent about it, so
+    without this "THE PEW CHARITABLE TRUSTS" and "PEW CHARITABLE TRUSTS" were two separate
+    organizations — 385 org identities in the 2013-2026 data were split this way, which
+    both fragmented the client list and could fire the first-time-org badge for a
+    long-established org that merely dropped the article on a later filing.
     """
     if not name:
         return ""
@@ -30,6 +40,7 @@ def norm_name(name: str, strip_suffixes: bool = True) -> str:
     s = _PAREN_RE.sub(" ", s)
     s = _PUNCT_RE.sub(" ", s)
     s = _WS_RE.sub(" ", s).strip()
+    s = _LEADING_ARTICLE_RE.sub("", s)
     if strip_suffixes:
         words = s.split(" ")
         while words and words[-1] in _LEGAL_SUFFIXES:
@@ -133,6 +144,13 @@ def build_org_first_seen(con: duckdb.DuckDBPyConnection) -> int:
 if __name__ == "__main__":
     assert norm_name("Acme Corp.") == "acme"
     assert norm_name("Acme Corporation") == "acme"
-    assert norm_name("The Smith Group, LLC") == "the smith group"
+    assert norm_name("The Smith Group, LLC") == "smith group"
     assert norm_name("O'Brien & Associates (2024)") == "o brien associates"
+    # A leading article is dropped so filers' inconsistency about it stops splitting one org
+    # into two, but only a leading one...
+    assert norm_name("The Pew Charitable Trusts") == norm_name("PEW CHARITABLE TRUSTS")
+    # ...an interior "the" is part of the name, and a word merely starting with "the" is not
+    # an article at all.
+    assert norm_name("Friends of the Earth") == "friends of the earth"
+    assert norm_name("Theranos Inc") == "theranos"
     print("norm_name self-checks passed")
