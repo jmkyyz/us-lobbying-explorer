@@ -289,15 +289,46 @@ class Batch:
         )
 
 
+_BAD_CHARREF_RE = re.compile(r"&#(?:x([0-9A-Fa-f]+)|([0-9]+));")
+
+
+def _valid_xml_char(cp: int) -> bool:
+    return (cp in (0x9, 0xA, 0xD) or 0x20 <= cp <= 0xD7FF
+            or 0xE000 <= cp <= 0xFFFD or 0x10000 <= cp <= 0x10FFFF)
+
+
+def sanitize_charrefs(text: str) -> str:
+    """Replace numeric character references that XML 1.0 does not allow with a space.
+
+    A small number of filings (16 across 2013-2026) embed control characters as numeric
+    references — "&#x1;air&#x1;space access", "COVID&#x2;19" — which are illegal in XML and
+    make ElementTree reject the whole document. They stand in for a space or a hyphen the
+    filer typed. Dropping these filings would be quietly losing real disclosures, and the
+    text being lost is the description field the topic matcher reads, so they are repaired
+    rather than skipped. A space is the safe substitution: it keeps word boundaries intact
+    for keyword matching without inventing punctuation that was not in the source.
+    """
+    def sub(m):
+        cp = int(m.group(1), 16) if m.group(1) else int(m.group(2))
+        return m.group(0) if _valid_xml_char(cp) else " "
+    return _BAD_CHARREF_RE.sub(sub, text)
+
+
 def parse_filing(raw: bytes, house_file_id: str, batch: Batch) -> bool:
     """Parse one filing XML into batch. Returns False if it could not be parsed at all."""
+    # utf-8-sig: a minority of files carry a BOM. Some roots also carry xmlns:xsi/xsd
+    # attributes, which ElementTree handles but a naive "<LOBBYINGDISCLOSURE2>" string
+    # match would miss.
+    text = raw.decode("utf-8-sig", "replace")
     try:
-        # utf-8-sig: a minority of files carry a BOM. Some roots also carry xmlns:xsi/xsd
-        # attributes, which ElementTree handles but a naive "<LOBBYINGDISCLOSURE2>" string
-        # match would miss.
-        root = ET.fromstring(raw.decode("utf-8-sig", "replace"))
+        root = ET.fromstring(text)
     except ET.ParseError:
-        return False
+        # Only the handful of files with illegal character references take this path, so the
+        # regex pass stays off the hot loop for the other ~1.16M.
+        try:
+            root = ET.fromstring(sanitize_charrefs(text))
+        except ET.ParseError:
+            return False
 
     is_registration = root.tag.endswith("1")
     report_type = txt(root, "reportType")
