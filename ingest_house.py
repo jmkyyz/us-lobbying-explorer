@@ -186,6 +186,23 @@ def txt(el, tag: str) -> str:
     return found.text.strip()
 
 
+def all_descriptions(ali) -> str:
+    """Every <description> under this issue block, joined — not just the first.
+
+    Older filings split one issue's text across several sibling <description> elements
+    ("Financial Services Regulatory Reform: ..." / "Also, lobby for ..."), while 2015 onward
+    uses exactly one. Reading only the first silently dropped 51.9% of the issue text in
+    2013 Q1, which is the text the topic matcher and the ad-hoc search both read — so early
+    years would have under-reported every topic. Joined with a space rather than concatenated
+    so a keyword cannot be fabricated across the seam.
+    """
+    si = ali.find("specific_issues")
+    if si is None:
+        return ""
+    parts = [(d.text or "").strip() for d in si.findall("description")]
+    return " ".join(p for p in parts if p)
+
+
 def split_senate_id(senate_id: str):
     """'401104898-12' -> (401104898, '12'). LD-1 registrations carry only the registrant part
     because the client has no number assigned yet."""
@@ -424,7 +441,7 @@ def parse_filing(raw: bytes, house_file_id: str, batch: Batch) -> bool:
         _add_activity(
             batch, house_file_id, idx,
             txt(ali, "issueAreaCode"),
-            txt(ali, "./specific_issues/description"),
+            all_descriptions(ali),
             txt(ali, "federal_agencies"),
             ali.findall("./lobbyists/lobbyist"),
             txt(ali, "foreign_entity_issues"),
