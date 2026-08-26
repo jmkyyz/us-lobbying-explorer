@@ -430,18 +430,31 @@ def parse_filing(raw: bytes, house_file_id: str, batch: Batch) -> bool:
         client_id,
     ))
 
-    # LD-1 registrations list lobbyists directly under the root; LD-2 nests them per issue
-    # area inside alis/ali_info. Registrations have no issue text, so they get one synthetic
-    # activity row purely to hang their lobbyists off — matching how the API represents them.
+    # LD-1 registrations declare the issue AREAS they intend to lobby on as a list of bare
+    # <ali_Code> elements, and list lobbyists directly under the root. LD-2 quarterlies nest
+    # both inside alis/ali_info alongside the issue text.
     ali_infos = root.findall("./alis/ali_info")
     if not ali_infos and is_registration:
-        _add_activity(batch, house_file_id, 0, txt(root, "alis") or "", "", "",
-                      root.findall("./lobbyists/lobbyist"))
+        # One activity per declared code, mirroring how the API represents a registration —
+        # otherwise a registration carries no issue code at all and drops out of every
+        # code:XXX search. Reading <alis> as a single value (an earlier bug here) picked up
+        # only the element's own whitespace and lost all 113,846 coded registration rows.
+        lobbyist_els = root.findall("./lobbyists/lobbyist")
+        codes = [c for c in ((e.text or "").strip() for e in root.findall("./alis/ali_Code")) if c]
+        for idx, code in enumerate(codes or [""]):
+            _add_activity(batch, house_file_id, idx, code, "", "", lobbyist_els)
+
     for idx, ali in enumerate(ali_infos):
+        code = txt(ali, "issueAreaCode")
+        description = all_descriptions(ali)
+        # The alis block is padded out to a fixed length with empty ali_info entries, the same
+        # way lobbyist lists are padded. Those are layout, not activity — keeping them added
+        # 146,834 phantom uncoded activities. idx still comes from the unfiltered enumerate so
+        # activity_ids stay stable whether or not a filing has padding.
+        if not code and not description:
+            continue
         _add_activity(
-            batch, house_file_id, idx,
-            txt(ali, "issueAreaCode"),
-            all_descriptions(ali),
+            batch, house_file_id, idx, code, description,
             txt(ali, "federal_agencies"),
             ali.findall("./lobbyists/lobbyist"),
             txt(ali, "foreign_entity_issues"),
