@@ -26,6 +26,36 @@ def stage(con) -> dict:
     first_seen = build_org_first_seen(con)
     print(f"tag_topics: {tagged} activity-topic rows; build_org_first_seen: {first_seen} orgs")
 
+    # One display name per organisation.
+    #
+    # The frontend's client list does GROUP BY client_name (deliberately — one org holds a
+    # separate client_id per registrant relationship), so any org whose name is spelled two
+    # ways renders as two separate organisations. Filers retype their own name every quarter
+    # and are inconsistent about capitalisation, and the two upstream sources differ
+    # systematically as well: the old REST API uppercased names ("THE HOME DEPOT") while the
+    # House bulk XML preserves what the filer typed ("The Home Depot"). Left alone, that split
+    # 66% of recently-active orgs in two.
+    #
+    # Resolve it once here rather than in each query: every filing for an org gets the same
+    # rendering — the spelling that org's filings use most often, most recent breaking ties.
+    for tbl, key in (("clients", "client_id"), ("registrants", "registrant_id")):
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE {tbl}_display AS
+            SELECT name_norm, display FROM (
+                SELECT t.name_norm, t.name AS display,
+                       row_number() OVER (PARTITION BY t.name_norm
+                                          ORDER BY count(*) DESC, max(f.dt_posted) DESC) rn
+                FROM filings f JOIN {tbl} t ON t.{key} = f.{key}
+                WHERE t.name IS NOT NULL AND t.name_norm IS NOT NULL AND t.name_norm != ''
+                GROUP BY t.name_norm, t.name
+            ) WHERE rn = 1
+        """)
+    merged = con.execute("""
+        SELECT count(*) FROM (SELECT name_norm FROM clients WHERE name_norm != ''
+                              GROUP BY 1 HAVING count(DISTINCT name) > 1)
+    """).fetchone()[0]
+    print(f"canonical display names: collapsed {merged} multi-spelling client orgs")
+
     con.execute(f"""
         COPY (
             WITH issues AS (
@@ -43,8 +73,8 @@ def stage(con) -> dict:
                 f.filing_uuid, f.filing_type, f.filing_type_display, f.filing_year,
                 f.filing_period, f.filing_period_display, f.dt_posted, f.termination_date,
                 f.income, f.expenses,
-                r.name AS registrant_name, f.registrant_id,
-                c.name AS client_name, f.client_id, c.state AS client_state,
+                coalesce(rd.display, r.name) AS registrant_name, f.registrant_id,
+                coalesce(cd.display, c.name) AS client_name, f.client_id, c.state AS client_state,
                 c.country AS client_country,
                 i.issue_codes,
                 coalesce(e.government_entities, []) AS government_entities,
@@ -54,6 +84,8 @@ def stage(con) -> dict:
             LEFT JOIN entities e ON e.filing_uuid = f.filing_uuid
             LEFT JOIN registrants r ON r.registrant_id = f.registrant_id
             LEFT JOIN clients c ON c.client_id = f.client_id
+            LEFT JOIN clients_display cd ON cd.name_norm = c.name_norm
+            LEFT JOIN registrants_display rd ON rd.name_norm = r.name_norm
             LEFT JOIN org_first_seen ofs ON ofs.name_norm = c.name_norm
             ORDER BY f.dt_posted DESC
         ) TO '{STAGE_DIR}/filings.parquet'
@@ -72,20 +104,26 @@ def stage(con) -> dict:
                 la.general_issue_code_display, la.description,
                 coalesce(ta.topics, []) AS topics,
                 f.filing_year, f.filing_period, f.filing_period_display, f.dt_posted,
-                f.client_id, c.name AS client_name,
-                f.registrant_id, r.name AS registrant_name
+                f.client_id, coalesce(cd.display, c.name) AS client_name,
+                f.registrant_id, coalesce(rd.display, r.name) AS registrant_name
             FROM lobbying_activities la
             JOIN filings f ON f.filing_uuid = la.filing_uuid
             LEFT JOIN topics_agg ta ON ta.activity_id = la.activity_id
             LEFT JOIN clients c ON c.client_id = f.client_id
             LEFT JOIN registrants r ON r.registrant_id = f.registrant_id
+            LEFT JOIN clients_display cd ON cd.name_norm = c.name_norm
+            LEFT JOIN registrants_display rd ON rd.name_norm = r.name_norm
             ORDER BY f.dt_posted DESC
         ) TO '{STAGE_DIR}/activities.parquet'
         (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
     """)
 
     con.execute(f"""
-        COPY (SELECT * FROM org_first_seen ORDER BY first_date DESC)
+        COPY (SELECT o.name_norm, o.first_date,
+                     coalesce(cd.display, o.display_name) AS display_name, o.first_client_id
+              FROM org_first_seen o
+              LEFT JOIN clients_display cd ON cd.name_norm = o.name_norm
+              ORDER BY o.first_date DESC)
         TO '{STAGE_DIR}/org_first_seen.parquet'
         (FORMAT PARQUET, COMPRESSION ZSTD)
     """)
