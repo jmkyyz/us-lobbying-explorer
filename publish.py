@@ -99,28 +99,52 @@ def stage(con) -> dict:
         (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL {COMPRESSION_LEVEL}, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
     """)
 
+    # Activities are written as TWO files, because description alone is 72% of the bytes and
+    # nothing needs it until someone runs a text search or opens a client. The chart matches
+    # predefined topics on the precomputed `topics` column, so the default view never touches
+    # description at all. The frontend loads the core file up front and pulls the text file
+    # only on first use, which is what takes first load from ~131MB to ~78MB.
+    #
+    # Materialised to a temp table first so BOTH files get the same rid for the same row.
+    # Assigning row numbers separately per COPY would rely on two queries producing identical
+    # ordering, which nothing guarantees — and a silent mismatch would attach every filing's
+    # text to the wrong activity.
+    con.execute("""
+        CREATE OR REPLACE TEMP TABLE _activities_out AS
+        WITH topics_agg AS (
+            SELECT activity_id, list(topic_key) AS topics
+            FROM activity_topics
+            GROUP BY activity_id
+        )
+        SELECT
+            row_number() OVER (ORDER BY f.dt_posted DESC) - 1 AS rid,
+            la.filing_uuid, la.general_issue_code, la.description,
+            coalesce(ta.topics, []) AS topics,
+            f.filing_year, f.filing_period, f.filing_period_display, f.dt_posted,
+            f.client_id, coalesce(cd.display, c.name) AS client_name,
+            f.registrant_id, coalesce(rd.display, r.name) AS registrant_name
+        FROM lobbying_activities la
+        JOIN filings f ON f.filing_uuid = la.filing_uuid
+        LEFT JOIN topics_agg ta ON ta.activity_id = la.activity_id
+        LEFT JOIN clients c ON c.client_id = f.client_id
+        LEFT JOIN registrants r ON r.registrant_id = f.registrant_id
+        LEFT JOIN clients_display cd ON cd.name_norm = c.name_norm
+        LEFT JOIN registrants_display rd ON rd.name_norm = r.name_norm
+    """)
+
     con.execute(f"""
         COPY (
-            WITH topics_agg AS (
-                SELECT activity_id, list(topic_key) AS topics
-                FROM activity_topics
-                GROUP BY activity_id
-            )
-            SELECT
-                la.filing_uuid, la.general_issue_code, la.description,
-                coalesce(ta.topics, []) AS topics,
-                f.filing_year, f.filing_period, f.filing_period_display, f.dt_posted,
-                f.client_id, coalesce(cd.display, c.name) AS client_name,
-                f.registrant_id, coalesce(rd.display, r.name) AS registrant_name
-            FROM lobbying_activities la
-            JOIN filings f ON f.filing_uuid = la.filing_uuid
-            LEFT JOIN topics_agg ta ON ta.activity_id = la.activity_id
-            LEFT JOIN clients c ON c.client_id = f.client_id
-            LEFT JOIN registrants r ON r.registrant_id = f.registrant_id
-            LEFT JOIN clients_display cd ON cd.name_norm = c.name_norm
-            LEFT JOIN registrants_display rd ON rd.name_norm = r.name_norm
-            ORDER BY f.dt_posted DESC
+            SELECT rid, filing_uuid, general_issue_code, topics, filing_year, filing_period,
+                   filing_period_display, dt_posted, client_id, client_name,
+                   registrant_id, registrant_name
+            FROM _activities_out ORDER BY rid
         ) TO '{STAGE_DIR}/activities.parquet'
+        (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL {COMPRESSION_LEVEL}, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
+    """)
+
+    con.execute(f"""
+        COPY (SELECT rid, description FROM _activities_out ORDER BY rid)
+        TO '{STAGE_DIR}/activity_text.parquet'
         (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL {COMPRESSION_LEVEL}, ROW_GROUP_SIZE {ROW_GROUP_SIZE})
     """)
 
@@ -138,8 +162,15 @@ def stage(con) -> dict:
         t: con.execute(
             f"SELECT count(*) FROM '{STAGE_DIR}/{t}.parquet'"
         ).fetchone()[0]
-        for t in ["filings", "activities", "org_first_seen"]
+        for t in ["filings", "activities", "org_first_seen", "activity_text"]
     }
+    # The two activity files are joined by rid on the client, so a row-count mismatch would
+    # silently drop or mis-pair description text. Cheap to assert, expensive to discover later.
+    if counts["activities"] != counts["activity_text"]:
+        raise RuntimeError(
+            f"activities ({counts['activities']}) and activity_text "
+            f"({counts['activity_text']}) row counts differ — refusing to publish"
+        )
     date_range = con.execute(
         f"SELECT min(dt_posted), max(dt_posted) FROM '{STAGE_DIR}/filings.parquet'"
     ).fetchone()
@@ -173,6 +204,11 @@ def stage(con) -> dict:
             "filings": "filings.parquet",
             "activities": "activities.parquet",
             "org_first_seen": "org_first_seen.parquet",
+        },
+        # Fetched on demand, not at startup. An older frontend simply ignores this key and
+        # keeps working — it just never gets description, so keep `files` above eager-only.
+        "lazy_files": {
+            "activity_text": "activity_text.parquet",
         },
         "row_counts": counts,
         "date_range": {

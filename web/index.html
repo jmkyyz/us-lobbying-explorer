@@ -389,6 +389,57 @@ async function loadData() {
   statusEl.textContent = `Ready · ${Number(n.toArray()[0].n).toLocaleString()} filings loaded (built ${manifest.built_at})`;
 }
 
+// ---------- Deferred filing text ----------
+//
+// description is ~72% of the activity bytes and nothing needs it to draw the default view:
+// predefined topics match on the precomputed `topics` column. So it ships as a separate file
+// and is fetched the first time something actually reads the text — an ad-hoc search, or a
+// drill-down modal.
+//
+// Once loaded, the `activities` view is redefined to include description, so every existing
+// query that selects it keeps working untouched rather than needing a rewritten join.
+let activityTextPromise = null;
+
+function activityTextReady() {
+  return activityTextPromise !== null;
+}
+
+function ensureActivityText() {
+  // Cache the promise, not a boolean: two concurrent callers (a search fired while a modal is
+  // opening) must share one fetch instead of downloading ~57MB twice.
+  if (activityTextPromise) return activityTextPromise;
+  const file = MANIFEST.lazy_files && MANIFEST.lazy_files.activity_text;
+  if (!file) {
+    // Older manifest with description still inline in activities.parquet — nothing to fetch.
+    activityTextPromise = Promise.resolve();
+    return activityTextPromise;
+  }
+  activityTextPromise = (async () => {
+    const prev = statusEl.textContent;
+    statusEl.textContent = 'Loading filing text…';
+    try {
+      const buf = await fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`).then(r => {
+        if (!r.ok) throw new Error(`${r.status} fetching ${file}`);
+        return r.arrayBuffer();
+      });
+      await db.registerFileBuffer(file, new Uint8Array(buf));
+      await conn.query(`CREATE OR REPLACE VIEW activity_text AS SELECT * FROM '${file}'`);
+      await conn.query(`
+        CREATE OR REPLACE VIEW activities AS
+        SELECT a.*, t.description
+        FROM '${MANIFEST.files.activities}' a
+        JOIN activity_text t USING (rid)`);
+      statusEl.textContent = prev;
+    } catch (e) {
+      // Let the next attempt retry rather than caching a permanent failure.
+      activityTextPromise = null;
+      statusEl.textContent = prev;
+      throw e;
+    }
+  })();
+  return activityTextPromise;
+}
+
 function plainValue(v) {
   // DuckDB-WASM returns LIST columns as Arrow Vector objects (toArray() but no .join/.map
   // like a real array), and count()/sum() as BigInt (not a plain number) — either one throws
@@ -510,6 +561,7 @@ function renderBrowseTable(rows) {
 // (openClientTopicModal below), but has no topic to restrict to: it shows every activity
 // for the client, narrowed by whatever year/issue filters are currently set in the browse bar.
 async function openClientBrowseModal(clientName) {
+  await ensureActivityText();   // the modal lists what was filed, i.e. description text
   const year = document.getElementById('f-year').value.trim();
   const issue = document.getElementById('f-issue').value.trim();
   const scopeClauses = [`client_name = '${esc(clientName)}'`];
@@ -768,6 +820,10 @@ const PERIOD_INFO = {
 
 async function runTopicQuery() {
   if (!activeTopic && !activeAdhoc) return;
+  // Ad-hoc search matches on description; predefined topics match on the precomputed `topics`
+  // column and never need the text file. Guarding here rather than at the search box covers
+  // every path that re-runs the query (range change, scope toggle) with a search still active.
+  if (activeAdhoc) await ensureActivityText();
   const { activitiesWhere, label } = topicMatchInfo();
 
   const raw = await q(`
@@ -902,6 +958,7 @@ document.getElementById('client-sort').addEventListener('change', e => {
 
 async function runTopicClients() {
   if (!activeTopic && !activeAdhoc) return;
+  if (activeAdhoc) await ensureActivityText();
   const { activitiesWhere } = topicMatchInfo();
   // No LIMIT — the full list stays in memory (client-side query, instant) and the renderer
   // decides how much to show.
@@ -1195,6 +1252,7 @@ function groupActivities(rows) {
 }
 
 async function openClientTopicModal(clientName) {
+  await ensureActivityText();   // the modal lists what was filed, i.e. description text
   const { activitiesWhere, label } = topicMatchInfo();
   const baseQuery = cols => `
     SELECT ${cols}
