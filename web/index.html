@@ -525,11 +525,11 @@ async function openClientBrowseModal(clientName) {
   let rows;
   try {
     rows = await q(baseQuery(
-      'general_issue_code, general_issue_code_display, description, filing_year, filing_period_display, registrant_name'
+      'general_issue_code, general_issue_code AS general_issue_code_display, description, filing_year, filing_period_display, registrant_name'
     ));
   } catch (e) {
     rows = await q(baseQuery(
-      'general_issue_code, general_issue_code_display, description, filing_year, NULL AS filing_period_display, registrant_name'
+      'general_issue_code, general_issue_code AS general_issue_code_display, description, filing_year, NULL AS filing_period_display, registrant_name'
     ));
   }
 
@@ -1204,12 +1204,12 @@ async function openClientTopicModal(clientName) {
   let rows;
   try {
     rows = await q(baseQuery(
-      'general_issue_code, general_issue_code_display, description, filing_year, filing_period_display, registrant_name'
+      'general_issue_code, general_issue_code AS general_issue_code_display, description, filing_year, filing_period_display, registrant_name'
     ));
   } catch (e) {
     // Staged parquet predating the filing_period columns: fall back to year-only detail.
     rows = await q(baseQuery(
-      'general_issue_code, general_issue_code_display, description, filing_year, NULL AS filing_period_display, registrant_name'
+      'general_issue_code, general_issue_code AS general_issue_code_display, description, filing_year, NULL AS filing_period_display, registrant_name'
     ));
   }
 
