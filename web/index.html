@@ -425,9 +425,11 @@ function emitActivityTextProgress(p) {
   for (const fn of activityTextWatchers) { try { fn(p); } catch (e) { /* never let a watcher break the download */ } }
 }
 
-function ensureActivityText() {
-  // Cache the promise, not a boolean: two concurrent callers (a search fired while a modal is
-  // opening) must share one fetch instead of downloading ~57MB twice.
+function ensureActivityText(opts = {}) {
+  // Cache the promise, not a boolean: concurrent callers (the background prefetch, a click,
+  // a search) must share one fetch instead of downloading ~57MB more than once. Whoever
+  // starts it decides how loudly it reports; a click that lands mid-prefetch still gets its
+  // own progress bar in the modal via watchActivityText.
   if (activityTextPromise) return activityTextPromise;
   const file = MANIFEST.lazy_files && MANIFEST.lazy_files.activity_text;
   if (!file) {
@@ -435,8 +437,14 @@ function ensureActivityText() {
     activityTextPromise = Promise.resolve();
     return activityTextPromise;
   }
+  // The background prefetch must not overwrite "Ready · N filings loaded" with a progress
+  // message — the app IS ready, and saying otherwise reads as a stall. It appends a quiet
+  // suffix instead, so the download is still visible to anyone watching (or on a metered
+  // connection) without looking like a problem.
+  const quiet = opts.background === true;
   activityTextPromise = (async () => {
     const prev = statusEl.textContent;
+    const say = msg => { statusEl.textContent = quiet ? `${prev} · ${msg}` : msg; };
     try {
       const resp = await fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`);
       if (!resp.ok) throw new Error(`${resp.status} fetching ${file}`);
@@ -457,18 +465,18 @@ function ensureActivityText() {
           if (done) break;
           chunks.push(value);
           loaded += value.length;
-          statusEl.textContent = `Loading filing text… ${fmtMB(loaded)}${total ? ' / ' + fmtMB(total) : ''}`;
+          say(`loading filing text… ${fmtMB(loaded)}${total ? ' / ' + fmtMB(total) : ''}`);
           emitActivityTextProgress({ loaded, total });
         }
         buf = new Uint8Array(loaded);
         let at = 0;
         for (const c of chunks) { buf.set(c, at); at += c.length; }
       } else {
-        statusEl.textContent = 'Loading filing text…';
+        say('loading filing text…');
         buf = new Uint8Array(await resp.arrayBuffer());
       }
 
-      statusEl.textContent = 'Preparing filing text…';
+      say('preparing filing text…');
       emitActivityTextProgress({ loaded: total || buf.length, total: total || buf.length, indexing: true });
       await db.registerFileBuffer(file, buf);
       await conn.query(`CREATE OR REPLACE VIEW activity_text AS SELECT * FROM '${file}'`);
@@ -1541,6 +1549,20 @@ loadData().then(async () => {
   await loadTopicsConfig();
   await runTopicQuery();
   await runBrowseSearch();
+
+  // Warm the filing text in the background. Practically everyone goes past the chart into
+  // the detail, so fetching it now means a client click is usually instant — while still
+  // keeping it OUT of the startup path, which is what took first load from 131MB to 78MB.
+  // Deliberately after the first render, and idle-scheduled, so it never competes with the
+  // queries that draw the opening screen.
+  //
+  // Not awaited: a click landing mid-download shares this same fetch (ensureActivityText
+  // caches the promise) and gets the progress bar in the modal, so the fast-click path is
+  // unchanged. Failure is swallowed here because it is speculative — the next real click
+  // retries and surfaces the error where the user can see it.
+  const warm = () => ensureActivityText({ background: true }).catch(() => {});
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 3000 });
+  else setTimeout(warm, 800);
 }).catch(err => {
   statusEl.textContent = 'Failed to load: ' + err.message;
   console.error(err);
