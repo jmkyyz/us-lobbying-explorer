@@ -138,6 +138,12 @@
   .scope-pill { padding: 4px 10px; font-size: 12px; }
   .clients-count { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
   .id-note { font-size: 10px; color: var(--text-muted); margin-left: 5px; cursor: help; }
+  .text-loading { padding: 22px 4px; }
+  .text-loading-title { font-size: 13px; margin-bottom: 10px; }
+  .text-loading-note { font-size: 11.5px; color: var(--text-muted); margin-top: 8px; }
+  .progress-track { height: 6px; border-radius: 3px; background: rgba(127,127,127,.22); overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 3px; background: var(--series-1); transition: width .15s linear; }
+  @keyframes pulse { 0%,100% { opacity: .45 } 50% { opacity: 1 } }
   .clients-scroll.expanded { max-height: 540px; overflow-y: auto; border-bottom: 1px solid var(--gridline); }
   .range-row select {
     font-family: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 5px;
@@ -399,9 +405,24 @@ async function loadData() {
 // Once loaded, the `activities` view is redefined to include description, so every existing
 // query that selects it keeps working untouched rather than needing a rewritten join.
 let activityTextPromise = null;
+let activityTextProgress = null;              // {loaded, total} while downloading
+const activityTextWatchers = new Set();
 
 function activityTextReady() {
-  return activityTextPromise !== null;
+  return activityTextPromise !== null && activityTextProgress === null;
+}
+
+// Anything that has to wait on the download can subscribe to progress; returns an
+// unsubscribe. Used by the modals so a click shows a real bar instead of looking dead.
+function watchActivityText(fn) {
+  activityTextWatchers.add(fn);
+  if (activityTextProgress) fn(activityTextProgress);
+  return () => activityTextWatchers.delete(fn);
+}
+
+function emitActivityTextProgress(p) {
+  activityTextProgress = p;
+  for (const fn of activityTextWatchers) { try { fn(p); } catch (e) { /* never let a watcher break the download */ } }
 }
 
 function ensureActivityText() {
@@ -416,13 +437,40 @@ function ensureActivityText() {
   }
   activityTextPromise = (async () => {
     const prev = statusEl.textContent;
-    statusEl.textContent = 'Loading filing text…';
     try {
-      const buf = await fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`).then(r => {
-        if (!r.ok) throw new Error(`${r.status} fetching ${file}`);
-        return r.arrayBuffer();
-      });
-      await db.registerFileBuffer(file, new Uint8Array(buf));
+      const resp = await fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`);
+      if (!resp.ok) throw new Error(`${resp.status} fetching ${file}`);
+
+      // Streamed rather than resp.arrayBuffer() purely so the byte count can be reported —
+      // 57MB is long enough that a click with no feedback reads as a broken button.
+      // Content-Length is CORS-safelisted, so it survives the cross-origin fetch from R2;
+      // if it is ever absent, total stays 0 and the UI shows an indeterminate state.
+      const total = Number(resp.headers.get('content-length')) || 0;
+      let buf;
+      if (resp.body && resp.body.getReader) {
+        const reader = resp.body.getReader();
+        const chunks = [];
+        let loaded = 0;
+        emitActivityTextProgress({ loaded: 0, total });
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.length;
+          statusEl.textContent = `Loading filing text… ${fmtMB(loaded)}${total ? ' / ' + fmtMB(total) : ''}`;
+          emitActivityTextProgress({ loaded, total });
+        }
+        buf = new Uint8Array(loaded);
+        let at = 0;
+        for (const c of chunks) { buf.set(c, at); at += c.length; }
+      } else {
+        statusEl.textContent = 'Loading filing text…';
+        buf = new Uint8Array(await resp.arrayBuffer());
+      }
+
+      statusEl.textContent = 'Preparing filing text…';
+      emitActivityTextProgress({ loaded: total || buf.length, total: total || buf.length, indexing: true });
+      await db.registerFileBuffer(file, buf);
       await conn.query(`CREATE OR REPLACE VIEW activity_text AS SELECT * FROM '${file}'`);
       await conn.query(`
         CREATE OR REPLACE VIEW activities AS
@@ -430,14 +478,61 @@ function ensureActivityText() {
         FROM '${MANIFEST.files.activities}' a
         JOIN activity_text t USING (rid)`);
       statusEl.textContent = prev;
+      emitActivityTextProgress(null);
     } catch (e) {
       // Let the next attempt retry rather than caching a permanent failure.
       activityTextPromise = null;
       statusEl.textContent = prev;
+      emitActivityTextProgress(null);
       throw e;
     }
   })();
   return activityTextPromise;
+}
+
+function fmtMB(bytes) {
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// Modal placeholder shown while the text file downloads. Explains what is happening, that it
+// is one-time, and (once Content-Length is known) how far along it is.
+function activityTextLoadingHTML(p) {
+  const pct = p && p.total ? Math.min(100, Math.round(p.loaded / p.total * 100)) : null;
+  const detail = p && p.indexing
+    ? 'Preparing…'
+    : (p && p.total ? `${fmtMB(p.loaded)} of ${fmtMB(p.total)}` : 'Starting…');
+  return `
+    <div class="text-loading">
+      <div class="text-loading-title">Loading filing text…</div>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct === null ? 15 : pct}%${
+        pct === null ? ';animation:pulse 1.2s ease-in-out infinite' : ''}"></div></div>
+      <div class="text-loading-note">${detail} · one-time download, then every client opens instantly</div>
+    </div>`;
+}
+
+// Opens the modal shell right away and streams progress into it. Without this the overlay
+// only appeared after the download finished, so the first click looked like it did nothing.
+async function withActivityText(bodyId, titleEl, titleText, subtitleEl, subtitleText) {
+  if (activityTextReady()) return ensureActivityText();
+  if (titleEl) document.getElementById(titleEl).textContent = titleText || '';
+  if (subtitleEl) document.getElementById(subtitleEl).textContent = subtitleText || '';
+  const body = document.getElementById(bodyId);
+  body.innerHTML = activityTextLoadingHTML(activityTextProgress);
+  document.getElementById('modal-overlay').classList.add('open');
+  const stop = watchActivityText(p => {
+    if (document.getElementById('modal-overlay').classList.contains('open')) {
+      body.innerHTML = activityTextLoadingHTML(p);
+    }
+  });
+  try {
+    await ensureActivityText();
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--text-muted);font-size:12.5px">Couldn't load filing text (${
+      escapeHtml(e.message)}). Close and try again.</div>`;
+    throw e;
+  } finally {
+    stop();
+  }
 }
 
 function plainValue(v) {
@@ -561,7 +656,8 @@ function renderBrowseTable(rows) {
 // (openClientTopicModal below), but has no topic to restrict to: it shows every activity
 // for the client, narrowed by whatever year/issue filters are currently set in the browse bar.
 async function openClientBrowseModal(clientName) {
-  await ensureActivityText();   // the modal lists what was filed, i.e. description text
+  await withActivityText('modal-body', 'modal-client-name', clientName,
+                         'modal-topic-name', 'All lobbying activity on file for this client');
   const year = document.getElementById('f-year').value.trim();
   const issue = document.getElementById('f-issue').value.trim();
   const scopeClauses = [`client_name = '${esc(clientName)}'`];
@@ -1252,8 +1348,11 @@ function groupActivities(rows) {
 }
 
 async function openClientTopicModal(clientName) {
-  await ensureActivityText();   // the modal lists what was filed, i.e. description text
   const { activitiesWhere, label } = topicMatchInfo();
+  // Opens the shell with a progress bar if the text file isn't loaded yet, so the click
+  // gives immediate feedback instead of appearing to fail for the length of a 57MB download.
+  await withActivityText('modal-body', 'modal-client-name', clientName,
+                         'modal-topic-name', `What they lobbied about matching ${label}`);
   const baseQuery = cols => `
     SELECT ${cols}
     FROM activities
