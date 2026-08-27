@@ -235,7 +235,7 @@
         <div class="card-head">
           <div>
             <div class="chart-title">Who's behind it (top clients)</div>
-            <div class="chart-caption">Click a client to see what they lobbied about on this topic. Narrow the window to see who's been active recently.</div>
+            <div class="chart-caption">Click a client to see what they lobbied about on this topic. Defaults to the most recent quarters — widen the range for the full history.</div>
           </div>
           <button class="secondary export-btn" id="export-clients">Download CSV</button>
         </div>
@@ -828,8 +828,15 @@ function buildRangeOptions() {
   const opts = RANGE_QUARTERS.map((r, i) => `<option value="${i}">${r.label}</option>`).join('');
   fromSel.innerHTML = opts;
   toSel.innerHTML = opts;
-  fromSel.value = 0;
+
+  // Default to a recent window rather than all of history. Ranked over 13 years, the client
+  // list is dominated by whoever has filed steadily the longest, which buries the orgs that
+  // turned up on a topic this year — usually the point of the question. Anchored to the
+  // newest quarter, not to today, so the default keeps sliding forward on its own as new
+  // quarters land. Widening back to the full range restores the previous behaviour.
+  const DEFAULT_QUARTERS_BACK = 4;
   toSel.value = RANGE_QUARTERS.length - 1;
+  fromSel.value = Math.max(0, RANGE_QUARTERS.length - 1 - DEFAULT_QUARTERS_BACK);
 
   const onChange = () => {
     if (Number(fromSel.value) > Number(toSel.value)) {
