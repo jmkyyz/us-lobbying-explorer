@@ -242,6 +242,10 @@
         <div class="range-row">
           <label>Filed from <select id="range-from"></select></label>
           <label>to <select id="range-to"></select></label>
+          <label>sorted by <select id="client-sort">
+            <option value="filings">most filings</option>
+            <option value="latest">most recent filing</option>
+          </select></label>
           <span class="scope-toggle">
             <button class="topic-pill scope-pill active" data-scope="all">All mentions</button>
             <button class="topic-pill scope-pill" data-scope="exclusive">Exclusively this topic</button>
@@ -867,6 +871,7 @@ function rangeClause() {
 let topicClientsAll = [];      // full ranked client list for the current topic + range
 let topicClientsExpanded = false;
 let clientsExclusiveOnly = false;
+let clientSortMode = 'filings';   // 'filings' | 'latest'
 const CLIENTS_PREVIEW = 20;
 
 // "Exclusively this topic" uses the same definition as the chart's dashed line: filings whose
@@ -888,6 +893,13 @@ document.querySelectorAll('.scope-pill').forEach(btn => {
   });
 });
 
+// Re-render only — the underlying rows are unchanged, so switching sort never re-queries,
+// and it deliberately does not reset the expanded/collapsed state of the list.
+document.getElementById('client-sort').addEventListener('change', e => {
+  clientSortMode = e.target.value;
+  renderTopicClientsTable();
+});
+
 async function runTopicClients() {
   if (!activeTopic && !activeAdhoc) return;
   const { activitiesWhere } = topicMatchInfo();
@@ -901,9 +913,13 @@ async function runTopicClients() {
   //    registrant it hires, so grouping by id split National Fisheries into three rows
   //    (57/35/17 of its 109 filings) and buried it in the ranking.
   // Both now match how the chart counts.
+  // last_filed is formatted to an ISO string in SQL rather than returned as a timestamp:
+  // it sidesteps how DuckDB-WASM hands back TIMESTAMP values to JS, and ISO strings sort
+  // lexicographically, so the "most recent" ordering needs no date parsing at all.
   topicClientsAll = await q(
     `SELECT client_name, count(DISTINCT filing_uuid) AS n,
             count(DISTINCT client_id) AS id_count,
+            strftime(max(dt_posted), '%Y-%m-%d') AS last_filed,
             string_agg(DISTINCT client_id::VARCHAR, ';') AS client_ids
      FROM activities
      WHERE ${activitiesWhere} AND client_name IS NOT NULL${rangeClause()}${exclusiveClause()}
@@ -1005,6 +1021,19 @@ function renderMetric() {
   renderLineChart(topicSeriesRows, def);
 }
 
+// Sorting happens here, not in SQL: the full list is already in memory, so switching order
+// is instant and costs no re-query. Each mode tie-breaks on the other so the ordering is
+// total — otherwise clients level on the primary key would shuffle between renders.
+function sortedTopicClients() {
+  const rows = topicClientsAll.slice();
+  if (clientSortMode === 'latest') {
+    rows.sort((a, b) => String(b.last_filed || '').localeCompare(String(a.last_filed || '')) || b.n - a.n);
+  } else {
+    rows.sort((a, b) => b.n - a.n || String(b.last_filed || '').localeCompare(String(a.last_filed || '')));
+  }
+  return rows;
+}
+
 function renderTopicClientsTable() {
   const wrap = document.getElementById('topic-clients-table');
   if (!topicClientsAll.length) {
@@ -1012,13 +1041,15 @@ function renderTopicClientsTable() {
     return;
   }
   const total = topicClientsAll.length;
-  const rows = topicClientsExpanded ? topicClientsAll : topicClientsAll.slice(0, CLIENTS_PREVIEW);
+  const sorted = sortedTopicClients();
+  const rows = topicClientsExpanded ? sorted : sorted.slice(0, CLIENTS_PREVIEW);
 
   const body = rows.map(r => `
     <tr>
       <td><a class="client-link" data-client="${encodeURIComponent(r.client_name)}">${escapeHtml(r.client_name)}</a>${
         r.id_count > 1 ? `<span class="id-note" title="Filed via ${r.id_count} registrant relationships">×${r.id_count}</span>` : ''}</td>
       <td class="num">${r.n}</td>
+      <td class="num">${r.last_filed || ''}</td>
     </tr>`).join('');
 
   const toggle = total > CLIENTS_PREVIEW
@@ -1031,7 +1062,7 @@ function renderTopicClientsTable() {
       clientsExclusiveOnly ? ' lobbying <b>exclusively</b> on this topic' : ' mentioning this topic'} in this window${
       topicClientsExpanded || total <= CLIENTS_PREVIEW ? '' : ` · showing top ${CLIENTS_PREVIEW}`}</div>
     <div class="clients-scroll${topicClientsExpanded ? ' expanded' : ''}">
-      <table><thead><tr><th>Client</th><th>Filings</th></tr></thead><tbody>${body}</tbody></table>
+      <table><thead><tr><th>Client</th><th>Filings</th><th>Last filed</th></tr></thead><tbody>${body}</tbody></table>
     </div>${toggle}`;
 
   wrap.querySelectorAll('.client-link').forEach(el => {
@@ -1107,10 +1138,12 @@ document.getElementById('export-chart').addEventListener('click', () => {
 document.getElementById('export-clients').addEventListener('click', () => {
   if (!topicClientsAll.length) return;
   const label = document.getElementById('topic-chart-title').dataset.label || 'topic';
+  // Export in the order shown on screen, so a CSV taken while sorted by "most recent"
+  // arrives in that order rather than silently reverting to the filing-count ranking.
   downloadCSV(
     `lobbying-${slug(label)}-clients${clientsExclusiveOnly ? '-exclusive' : ''}${rangeSuffix()}.csv`,
-    ['rank', 'client', 'filings', 'registrant_relationships', 'client_ids'],
-    topicClientsAll.map((r, i) => [i + 1, r.client_name, r.n, r.id_count, r.client_ids])
+    ['rank', 'client', 'filings', 'last_filed', 'registrant_relationships', 'client_ids'],
+    sortedTopicClients().map((r, i) => [i + 1, r.client_name, r.n, r.last_filed, r.id_count, r.client_ids])
   );
 });
 
