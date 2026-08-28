@@ -7,8 +7,11 @@ per slice with a large ROW_GROUP_SIZE. Applying that lesson here from day one.
 """
 
 import argparse
+import gzip
 import json
 import os
+import shutil
+import tempfile
 import time
 
 import schema
@@ -266,18 +269,43 @@ def upload():
         print(f"uploaded {key}")
 
     # The duckdb wasm engine ships from R2 too (34MB exceeds Cloudflare Workers' 25MiB
-    # per-asset cap). Upload it if missing so a fresh bucket is self-sufficient; it's
-    # immutable, so skip the transfer when it's already there.
+    # per-asset cap). Stored gzipped: R2 does not compress on the fly, and the raw binary is
+    # 34MB against 7.7MB gzipped, which made it the largest single item on a cold load by a
+    # wide margin — bigger than all three eager parquet files combined. Browsers inflate it
+    # transparently from Content-Encoding, and streaming compilation is unaffected as long as
+    # the Content-Type stays application/wasm.
+    #
+    # Re-uploaded when the stored copy is missing OR still the uncompressed original, so a
+    # bucket published before this change is fixed by the next run. Otherwise skipped: the
+    # binary is immutable and there is no reason to push 8MB every day.
     wasm_key = f"{prefix}/vendor/{os.path.basename(WASM_PATH)}"
     try:
-        s3.head_object(Bucket=bucket, Key=wasm_key)
+        head = s3.head_object(Bucket=bucket, Key=wasm_key)
+        needs_wasm = head.get("ContentEncoding") != "gzip"
     except s3.exceptions.ClientError:
-        s3.upload_file(
-            WASM_PATH, bucket, wasm_key,
-            ExtraArgs={"ContentType": "application/wasm",
-                       "CacheControl": "public, max-age=31536000"},
-        )
-        print(f"uploaded {wasm_key}")
+        needs_wasm = True
+    if needs_wasm:
+        gz_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wasm.gz", delete=False) as tmp:
+                gz_path = tmp.name
+                # mtime=0 so republishing the same binary produces identical bytes.
+                with open(WASM_PATH, "rb") as src, gzip.GzipFile(
+                    fileobj=tmp, mode="wb", compresslevel=9, mtime=0
+                ) as dst:
+                    shutil.copyfileobj(src, dst)
+            s3.upload_file(
+                gz_path, bucket, wasm_key,
+                ExtraArgs={"ContentType": "application/wasm",
+                           "ContentEncoding": "gzip",
+                           "CacheControl": "public, max-age=31536000"},
+            )
+            raw_mb = os.path.getsize(WASM_PATH) / 1e6
+            gz_mb = os.path.getsize(gz_path) / 1e6
+            print(f"uploaded {wasm_key} (gzip: {raw_mb:.0f}MB -> {gz_mb:.1f}MB)")
+        finally:
+            if gz_path and os.path.exists(gz_path):
+                os.unlink(gz_path)
 
 
 def main():
