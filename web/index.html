@@ -359,22 +359,35 @@ async function initDuckDB() {
   conn = await db.connect();
 }
 
-async function loadData() {
-  statusEl.textContent = 'Loading engine…';
-  await initDuckDB();
-
-  statusEl.textContent = 'Fetching manifest…';
-  let manifest = null;
+async function fetchManifest() {
   for (const base of DATA_CANDIDATES) {
     try {
       const r = await fetch(`${base}/manifest.json`, { cache: 'no-cache' });
       if (!r.ok) continue;
-      manifest = await r.json();
+      const manifest = await r.json();
       DATA_BASE = base;
-      break;
+      return manifest;
     } catch (e) { /* try the next candidate */ }
   }
-  if (!manifest) throw new Error(`no data source reachable (tried: ${DATA_CANDIDATES.join(', ')})`);
+  throw new Error(`no data source reachable (tried: ${DATA_CANDIDATES.join(', ')})`);
+}
+
+async function loadData() {
+  statusEl.textContent = 'Loading engine…';
+
+  // Nothing here waits on anything it doesn't actually need. Booting the engine means
+  // fetching and compiling a 34MB wasm binary, which is the longest single step of a cold
+  // load — and the manifest and parquet files need none of it to come down the wire. So the
+  // engine boot is started but NOT awaited, the downloads are kicked off alongside it, and
+  // the buffers are handed to DuckDB once both sides are done. Time to Ready is the longer
+  // of the two, instead of their sum.
+  const enginePromise = initDuckDB();
+  // A rejected engine boot would otherwise surface as an unhandled rejection while we're
+  // still awaiting downloads; the real await below still sees the failure.
+  enginePromise.catch(() => {});
+
+  statusEl.textContent = 'Fetching manifest…';
+  const manifest = await fetchManifest();
   MANIFEST = manifest;
   manifestVersion = manifest.version;
   SHOW_FIRST_TIME = manifest.first_time_reliable === true;
@@ -384,10 +397,25 @@ async function loadData() {
     if (cb) cb.closest('.field').style.display = 'none';
   }
 
-  for (const [key, file] of Object.entries(manifest.files)) {
+  // All three in flight at once rather than one after another: they're independent, and
+  // serialising them left the connection idle through each registerFileBuffer in between.
+  const downloads = Object.entries(manifest.files).map(([key, file]) => {
+    const buf = fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`).then(r => {
+      if (!r.ok) throw new Error(`${r.status} fetching ${file}`);
+      return r.arrayBuffer();
+    });
+    buf.catch(() => {});  // same reason as the engine promise above
+    return { key, file, buf };
+  });
+
+  statusEl.textContent = 'Loading engine…';
+  await enginePromise;
+
+  // Registration is serial by necessity — one connection, and each view depends on its
+  // buffer being registered first — but by now the downloads have been running all along.
+  for (const { key, file, buf } of downloads) {
     statusEl.textContent = `Loading ${file}…`;
-    const buf = await fetch(`${DATA_BASE}/${file}?v=${manifestVersion}`).then(r => r.arrayBuffer());
-    await db.registerFileBuffer(file, new Uint8Array(buf));
+    await db.registerFileBuffer(file, new Uint8Array(await buf));
     await conn.query(`CREATE OR REPLACE VIEW ${key} AS SELECT * FROM '${file}'`);
   }
 
